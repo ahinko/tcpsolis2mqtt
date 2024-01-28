@@ -1,0 +1,4 @@
+pyyaml
+pydantic
+paho-mqtt
+umodbus

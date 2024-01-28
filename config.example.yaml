@@ -1,0 +1,20 @@
+---
+datalogger:
+  host:
+  port: 502
+  slave_id: 1
+  poll_interval: 60
+  poll_interval_if_off: 600
+inverter:
+  name: Solis
+  manufacturer: Ginlong Technologies
+  model: S5-GR3P15K
+mqtt:
+  host:
+  port: 1883
+  topic_prefix: tcpsolis2mqtt
+  client_id: tcpsolis2mqtt
+  user:
+  password:
+  use_ssl: False
+  validate_cert: False
