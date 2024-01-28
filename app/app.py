@@ -88,8 +88,8 @@ class App:
         sock.connect((self.config.datalogger.host, self.config.datalogger.port))
       except Exception as e:
         # in case we didn't have a exception before
+        logging.info(f"Datalogger not reachable, retrying in {self.config.datalogger.poll_interval_if_off} seconds")
         if not self.datalogger_offline:
-            logging.info("Datalogger not reachable")
             self.datalogger_is_offline(offline=True)
       else:
         self.datalogger_is_offline(offline=False)
@@ -127,7 +127,7 @@ class App:
               continue
           else:
             self.datalogger_is_offline(offline=False)
-            logging.info(f"{entry['modbus']['register']} {entry['description']} : {value}")
+            logging.debug(f"{entry['modbus']['register']} {entry['description']} : {value}")
 
           self.mqtt.publish(f"{self.config.mqtt.topic_prefix}/{entry['name']}", value, retain=True)
 
