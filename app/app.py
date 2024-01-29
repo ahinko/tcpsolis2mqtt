@@ -25,7 +25,9 @@ class App:
     self.datalogger_offline = False
     self.init_config()
     self.load_register_config()
-    self.mqtt = Mqtt(self.config.mqtt)
+
+    if self.config.mqtt.enabled:
+      self.mqtt = Mqtt(self.config.mqtt)
 
     log_level = logging.DEBUG if self.config.debug else logging.INFO
     logging.getLogger().setLevel(log_level)
@@ -40,12 +42,18 @@ class App:
     with open(register_file) as file:
       self.register_config = yaml.load(file, yaml.Loader)
 
+  def publish(self, topic, value, retain):
+    if not self.config.mqtt.enabled:
+      return
+
+    self.mqtt.publish(topic, value, retain)
+
   def generate_ha_discovery_topics(self):
     for entry in self.register_config:
       if entry['active'] and 'homeassistant' in entry:
         if entry['homeassistant']['device'] == 'sensor':
           logging.info("Generating discovery topic for sensor: "+entry['name'])
-          self.mqtt.publish(f"homeassistant/sensor/{self.config.mqtt.topic_prefix}/{entry['name']}/config",
+          self.publish(f"homeassistant/sensor/{self.config.mqtt.topic_prefix}/{entry['name']}/config",
                             str(DiscoverMsgSensor(self.config.mqtt.topic_prefix,
                                                   entry['description'],
                                                   entry['name'],
@@ -75,7 +83,7 @@ class App:
         else:
           continue
 
-        self.mqtt.publish(f"{self.config.mqtt.topic_prefix}/{entry['name']}", value, retain=True)
+        self.publish(f"{self.config.mqtt.topic_prefix}/{entry['name']}", value, retain=True)
 
   def main(self):
     self.generate_ha_discovery_topics()
@@ -131,7 +139,7 @@ class App:
             self.datalogger_is_offline(offline=False)
             logging.debug(f"{entry['modbus']['register']} {entry['description']} : {value}")
 
-          self.mqtt.publish(f"{self.config.mqtt.topic_prefix}/{entry['name']}", value, retain=True)
+          self.publish(f"{self.config.mqtt.topic_prefix}/{entry['name']}", value, retain=True)
 
       sock.close()
 

@@ -36,6 +36,7 @@ class InverterConfig(ConfigBaseModel):
   model: str = Field(default="", title="Inverter model")
 
 class AppConfig(ConfigBaseModel):
+  debug: bool = Field(title="Enable debug logging", default=False)
   datalogger: DataLoggerConfig = Field(title="Data logger Configuration.")
   mqtt: MqttConfig = Field(title="MQTT Configuration.")
   inverter: InverterConfig = Field(title="Inverter Configuration.")
