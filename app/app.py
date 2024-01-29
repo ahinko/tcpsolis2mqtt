@@ -3,6 +3,7 @@
 import os
 import yaml
 import logging
+import arrow
 
 from config import AppConfig
 
@@ -32,6 +33,8 @@ class App:
     log_level = logging.DEBUG if self.config.debug else logging.INFO
     logging.getLogger().setLevel(log_level)
     pymodbus_apply_logging_config(logging.INFO)
+
+    self.timezone_offset = arrow.now('local').format('ZZ')
 
   def init_config(self) -> None:
     config_file = os.environ.get("CONFIG_FILE", "./config.yaml")
@@ -138,7 +141,7 @@ class App:
             elif entry['modbus']['read_type'] == 'composed_datetime':
               message = client.read_input_registers(slave=self.config.datalogger.slave_id, address=entry['modbus']['register'], count=6)
 
-              value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}"
+              value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}{self.timezone_offset}"
 
           except Exception as e:
             if 'homeassistant' in entry and entry['homeassistant']['state_class'] == "measurement":
