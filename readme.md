@@ -11,7 +11,7 @@ Pull data from Solis S2-WL-ST datalogger using TCP without additional hardware. 
 > **You have been warned!**
 
 ## Background/motivation
-This journey started before I got my Solar panels installed. I knew I would get a Solis inverter and the S2-WT-ST data logger. I use Home Assistant and I try to have all my devices working locally without relying on cloud solutions. So I started researching existing Home assistant integrations and other solutions to be prepared. I found many alternatives but many of them required extra hardware. But it seemed that the S2-WT-ST is one of few (only?) Solis dataloggers that could be used to get data over TCP. Seeing that a few people had success after getting the firmware updated to 10010117 or higher made me confident that I would have this up and running quickly.
+This journey started before I got my Solar panels installed. I knew I would get a Solis S5-GR3P15K inverter and the S2-WT-ST data logger. I use Home Assistant and I try to have all my devices working locally without relying on cloud solutions. So I started researching existing Home assistant integrations and other solutions to be prepared. I found many alternatives but many of them required extra hardware. But it seemed that the S2-WT-ST is one of few (only?) Solis dataloggers that could be used to get data over TCP. Seeing that a few people had success after getting the firmware updated to 10010117 or higher made me confident that I would have this up and running quickly.
 
 When the Solar panels, inverter and datalogger was installed I realized that it wasn't as easy as I had hoped. I tried the different integrations and solutions but nothing worked. I got the firmware updated to 10010125 and the support person informed me that what I was trying to do would probably not work. I tried again but still nothing worked. I started looking at simpler ways of trying to talk to the datalogger over TCP to be able to debug and run tests and found a few example script written in Python. I was able to connect to the stick but none the registers used in different integrations was working.
 
@@ -29,7 +29,7 @@ So will this project work for you? I have no idea. I'm just hacking away on some
 I've used the [solis2mqtt](https://github.com/incub77/solis2mqtt) repo as an inspiration and I've borrowed some code since that project does a lot of similar things to what I want to do.
 
 ## Requirements
-* Only tested with a Solis S2-WL-ST datalogger with firmware 10010125
+* Only tested with a Solis S2-WL-ST datalogger with firmware 10010125 and a Solis S5-GR3P15K inverter with firmware 83003A
 * A static IP on the data logger
 * Docker
 * MQTT server
@@ -41,11 +41,11 @@ Most other integrations that I found all stated that Solis Cloud would not work 
 
 ### Is it possible to control the inverter?
 
-I have not focused on that since I don't have a need for it. But I think it should be possible to add this functionality.
+I have not focused on that since I don't have a need for it. If its possible to do so via MODBUS then it should be possible to add that functionality.
 
-### Will this work with other dataloggers or firmware versions?
+### Will this work with other dataloggers, inverters or firmware versions?
 
-I have no idea. I will probably never change to another datalogger or upgrad the firmware unless I absolutely have to. If you are able to get this working on another datalogger or firmware version, please let me know and I will add the information to the repo!
+I have no idea. I will probably never change to another datalogger or upgrade the firmware unless I absolutely have to. If you are able to get this working on another datalogger, inverter or firmware version, please let me know and I will add the information to the repo!
 
 ### Will there be a Home Assistant (HACS) integration?
 
