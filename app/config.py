@@ -35,7 +35,7 @@ class InverterConfig(ConfigBaseModel):
   manufacturer: str = Field(default="", title="Inverter manufacturer")
   model: str = Field(default="", title="Inverter model")
 
-class MqttConfig(ConfigBaseModel):
+class AppConfig(ConfigBaseModel):
   datalogger: DataLoggerConfig = Field(title="Data logger Configuration.")
   mqtt: MqttConfig = Field(title="MQTT Configuration.")
   inverter: InverterConfig = Field(title="Inverter Configuration.")

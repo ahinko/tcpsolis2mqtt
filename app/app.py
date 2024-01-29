@@ -30,7 +30,7 @@ class App:
 
   def init_config(self) -> None:
     config_file = os.environ.get("CONFIG_FILE", "./config.yaml")
-    self.config = MqttConfig.parse_file(config_file)
+    self.config = AppConfig.parse_file(config_file)
 
   def load_register_config(self) -> None:
     register_file = os.environ.get("REGISTER_FILE", "./modbus.yaml")
