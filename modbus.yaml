@@ -103,10 +103,10 @@
 - name: generation_last_month
   description: Energy generated last month
   unit: kWh
-  active: false
+  active: true
   modbus:
-    register: 3013
-    read_type: register
+    register: 3012
+    read_type: long
     function_code: 4
     scale: 1
   homeassistant:
