@@ -8,7 +8,6 @@ from umodbus import conf
 from umodbus.client import tcp
 
 import logging
-from logging.handlers import RotatingFileHandler
 
 import argparse
 from config import MqttConfig
@@ -27,6 +26,9 @@ class App:
     self.init_config()
     self.load_register_config()
     self.mqtt = Mqtt(self.config.mqtt)
+
+    log_level = logging.DEBUG if self.config.debug else logging.INFO
+    logging.getLogger().setLevel(log_level)
 
   def init_config(self) -> None:
     config_file = os.environ.get("CONFIG_FILE", "./config.yaml")
@@ -138,17 +140,11 @@ class App:
       logging.debug(f"Datalogger scanning paused for {sleep_duration} seconds")
       sleep(sleep_duration)
 
-
 if __name__ == '__main__':
-  parser = argparse.ArgumentParser(description='Solis S2 data logger to MQTT bridge.')
-  parser.add_argument('-v', '--verbose', action='store_true', help="verbose logging")
-  args = parser.parse_args()
-
-  def start_up(verbose):
-    log_level = logging.DEBUG if verbose else logging.INFO
+  def start_up():
     handler = logging.StreamHandler()
-    logging.basicConfig(level=log_level, format="%(asctime)s - %(name)s - %(message)s", handlers=[handler])
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s", handlers=[handler])
     logging.info("Starting up...")
     App().main()
 
-  start_up(args.verbose)
+  start_up()

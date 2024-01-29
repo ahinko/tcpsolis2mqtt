@@ -1,4 +1,5 @@
 ---
+log_level: INFO
 datalogger:
   host:
   port: 502
