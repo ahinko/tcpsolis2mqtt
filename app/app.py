@@ -102,10 +102,12 @@ class App:
             port=self.config.datalogger.port,
             framer=ModbusSocketFramer,
             timeout=10,
-            retry_on_empty=True,
+            retry_on_empty=False,
             close_comm_on_error=True,
         )
-        client.connect()
+
+        if not client.connect():
+          raise ModbusException('This is the exception you expect to handle')
 
       except ModbusException as e:
         # in case we didn't have a exception before
