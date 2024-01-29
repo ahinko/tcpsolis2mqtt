@@ -13,13 +13,14 @@ from datetime import datetime
 from mqtt import Mqtt
 from mqtt_discovery import DiscoverMsgSensor
 
-VERSION="0.9.0"
 from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
 from pymodbus.exceptions import ModbusException
 from pymodbus.transaction import ModbusSocketFramer
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadDecoder
+
+VERSION="0.9.1"
 
 class App:
   def __init__(self):
@@ -56,7 +57,7 @@ class App:
     for entry in self.register_config:
       if entry['active'] and 'homeassistant' in entry:
         if entry['homeassistant']['device'] == 'sensor':
-          logging.info("Generating discovery topic for sensor: "+entry['name'])
+          logging.debug("Generating discovery topic for sensor: "+entry['name'])
           self.publish(f"homeassistant/sensor/{self.config.mqtt.topic_prefix}/{entry['name']}/config",
                             str(DiscoverMsgSensor(self.config.mqtt.topic_prefix,
                                                   entry['description'],
@@ -79,7 +80,7 @@ class App:
     if self.datalogger_offline:
       # loop over all measurements and set value to 0 and publish to mqtt
       for entry in self.register_config:
-        if not entry['active'] or 'function_code' not in entry['modbus'] :
+        if not entry['active'] or 'read_type' not in entry['modbus'] :
           continue
 
         if 'homeassistant' in entry and entry['homeassistant']['state_class'] == "measurement":
@@ -111,6 +112,7 @@ class App:
         logging.info(f"Datalogger not reachable, retrying in {self.config.datalogger.poll_interval_if_off} seconds")
         if not self.datalogger_offline:
             self.datalogger_is_offline(offline=True)
+
       else:
         self.datalogger_is_offline(offline=False)
 
@@ -118,7 +120,7 @@ class App:
       if not self.datalogger_offline:
 
         for entry in self.register_config:
-          if not entry['active'] or 'function_code' not in entry['modbus'] :
+          if not entry['active'] or 'read_type' not in entry['modbus'] :
             continue
 
           try:
@@ -144,14 +146,16 @@ class App:
               value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}{self.timezone_offset}"
 
           except Exception as e:
+            logging.error(f"Error occured {e}")
+
             if 'homeassistant' in entry and entry['homeassistant']['state_class'] == "measurement":
               value = 0
             else:
-              logging.info("something went wrong!")
+              logging.error('Error while querying data logger: %s', e)
               continue
           else:
             self.datalogger_is_offline(offline=False)
-            logging.debug(f"{entry['modbus']['register']} {entry['description']} : {value}")
+            logging.info(f"{entry['modbus']['register']} {entry['description']} : {value}")
 
           self.publish(f"{self.config.mqtt.topic_prefix}/{entry['name']}", value, retain=True)
 
