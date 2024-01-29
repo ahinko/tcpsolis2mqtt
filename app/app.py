@@ -9,8 +9,7 @@ from umodbus.client import tcp
 
 import logging
 
-import argparse
-from config import MqttConfig
+from config import AppConfig
 
 from time import sleep
 from datetime import datetime
