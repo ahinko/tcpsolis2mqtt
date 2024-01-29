@@ -4,8 +4,8 @@
   unit: W
   active: true
   modbus:
-    register: 3005
-    read_type: register
+    register: 3004
+    read_type: long
     function_code: 4
     scale: 1
   homeassistant:
@@ -33,8 +33,8 @@
   unit: kWh
   active: true
   modbus:
-    register: 3009
-    read_type: register
+    register: 3008
+    read_type: long
     function_code: 4
     scale: 1
   homeassistant:
@@ -77,8 +77,8 @@
   unit: W
   active: true
   modbus:
-    register: 3007
-    read_type: register
+    register: 3006
+    read_type: long
     function_code: 4
     scale: 1
   homeassistant:
@@ -91,8 +91,8 @@
   unit: kWh
   active: true
   modbus:
-    register: 3011
-    read_type: register
+    register: 3010
+    read_type: long
     function_code: 4
     scale: 1
   homeassistant:
@@ -119,8 +119,8 @@
   unit: kWh
   active: true
   modbus:
-    register: 3017
-    read_type: register
+    register: 3016
+    read_type: long
     function_code: 4
     scale: 1
   homeassistant:

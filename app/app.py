@@ -1,12 +1,7 @@
 #!/usr/bin/python3
 
 import os
-import socket
 import yaml
-
-from umodbus import conf
-from umodbus.client import tcp
-
 import logging
 
 from config import AppConfig
@@ -18,6 +13,12 @@ from mqtt import Mqtt
 from mqtt_discovery import DiscoverMsgSensor
 
 VERSION="0.9.0"
+from pymodbus import pymodbus_apply_logging_config
+from pymodbus.client import ModbusTcpClient
+from pymodbus.exceptions import ModbusException
+from pymodbus.transaction import ModbusSocketFramer
+from pymodbus.constants import Endian
+from pymodbus.payload import BinaryPayloadDecoder
 
 class App:
   def __init__(self):
@@ -30,6 +31,7 @@ class App:
 
     log_level = logging.DEBUG if self.config.debug else logging.INFO
     logging.getLogger().setLevel(log_level)
+    pymodbus_apply_logging_config(logging.INFO)
 
   def init_config(self) -> None:
     config_file = os.environ.get("CONFIG_FILE", "./config.yaml")
@@ -91,11 +93,17 @@ class App:
       logging.debug("Datalogger scan start at " + datetime.now().isoformat())
 
       try:
-        conf.SIGNED_VALUES = False
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(10.0)
-        sock.connect((self.config.datalogger.host, self.config.datalogger.port))
-      except Exception as e:
+        client = ModbusTcpClient(
+            self.config.datalogger.host,
+            port=self.config.datalogger.port,
+            framer=ModbusSocketFramer,
+            timeout=10,
+            retry_on_empty=True,
+            close_comm_on_error=True,
+        )
+        client.connect()
+
+      except ModbusException as e:
         # in case we didn't have a exception before
         logging.info(f"Datalogger not reachable, retrying in {self.config.datalogger.poll_interval_if_off} seconds")
         if not self.datalogger_offline:
@@ -112,21 +120,25 @@ class App:
 
           try:
             if entry['modbus']['read_type'] == 'register':
-              message = tcp.read_input_registers(slave_id=self.config.datalogger.slave_id, starting_address=entry['modbus']['register'], quantity=1)
-              response = tcp.send_message(message, sock)
+              message = client.read_input_registers(slave=self.config.datalogger.slave_id, address=entry['modbus']['register'], count=1)
 
-              value = response[0]
+              value = message.registers[0]
               if 'scale' in entry['modbus']:
                 value = float(value) * entry['modbus']['scale']
 
                 if 'decimals' in entry['modbus']:
                   value = round(value, entry['modbus']['decimals'])
 
-            if entry['modbus']['read_type'] == 'composed_datetime':
-              message = tcp.read_input_registers(slave_id=self.config.datalogger.slave_id, starting_address=entry['modbus']['register'], quantity=6)
-              response = tcp.send_message(message, sock)
+            if entry['modbus']['read_type'] == 'long':
+              message = client.read_input_registers(slave=self.config.datalogger.slave_id, address=entry['modbus']['register'], count=2)
+              decoder = BinaryPayloadDecoder.fromRegisters(message.registers, byteorder=Endian.BIG, wordorder=Endian.BIG)
 
-              value = f"20{response[0]:02d}-{response[1]:02d}-{response[2]:02d}T{response[3]:02d}:{response[4]:02d}:{response[5]:02d}"
+              value = str(decoder.decode_32bit_int())
+
+            elif entry['modbus']['read_type'] == 'composed_datetime':
+              message = client.read_input_registers(slave=self.config.datalogger.slave_id, address=entry['modbus']['register'], count=6)
+
+              value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}"
 
           except Exception as e:
             if 'homeassistant' in entry and entry['homeassistant']['state_class'] == "measurement":
@@ -140,7 +152,7 @@ class App:
 
           self.publish(f"{self.config.mqtt.topic_prefix}/{entry['name']}", value, retain=True)
 
-      sock.close()
+      client.close()
 
       # wait with next poll configured interval, or if datalogger is not responding ten times the interval
       sleep_duration = self.config.datalogger.poll_interval if not self.datalogger_offline else self.config.datalogger.poll_interval_if_off
