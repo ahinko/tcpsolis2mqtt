@@ -54,6 +54,9 @@ class App:
     self.mqtt.publish(topic, value, retain)
 
   def generate_ha_discovery_topics(self):
+    if not self.config.mqtt.enabled:
+      return
+
     for entry in self.register_config:
       if entry['active'] and 'homeassistant' in entry:
         if entry['homeassistant']['device'] == 'sensor':
