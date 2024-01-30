@@ -124,7 +124,7 @@ class App:
         mr_registers = mr.text.split(";")
 
         for entry in self.register_config:
-            if not entry["active"] or not "http" in entry:
+            if not entry["active"] or "http" not in entry:
                 continue
 
             value = None
