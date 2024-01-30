@@ -28,11 +28,11 @@ jobs:
 
       - name: Check formatting
         run: |
-          ruff format --check --diff *.py
+          ruff format --check --diff app
 
       - name: Check lint
         run: |
-          ruff check *.py
+          ruff check app
 
   build-test:
     runs-on: ubuntu-latest
