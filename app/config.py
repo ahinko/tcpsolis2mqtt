@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Extra, Field, parse_obj_as, validator
+from pydantic import BaseModel, Extra, Field, validator
 from typing import Dict, List, Optional, Tuple, Union
 import yaml
 
