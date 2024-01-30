@@ -52,4 +52,15 @@ I have no idea. I will probably never change to another datalogger or upgrade th
 Maybe, I have no plans for it at the moment. My main goal is to get the data into Home Assistant and I decided to use MQTT to simlify the project a little bit.
 
 ## Getting started
-**TODO**
+Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`.
+
+### Docker
+Please note that the `main` tag is the current development branch. This should be switched to `latest` or an actual version when releases start happening.
+
+`docker run -v "$(pwd)"/config.yaml:/usr/app/src/config.yaml:ro ghcr.io/ahinko/tcpsolis2mqtt:main`
+
+### Docker compose
+TODO
+
+### Kubernetes/Helm
+TODO
