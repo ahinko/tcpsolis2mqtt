@@ -1,0 +1,47 @@
+{
+  "enabled": true,
+  "timezone": "Europe/Stockholm",
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "🤖 Renovate Dashboard",
+  "suppressNotifications": ["prIgnoreNotification"],
+  "rebaseWhen": "conflicted",
+  "assignees": ["@ahinko"],
+  "semanticCommits": true,
+  "packageRules": [
+    {
+      "datasources": ["docker", "pypi"],
+      "enabled": true,
+      "updateTypes": ["major", "minor", "patch"]
+    },
+    {
+      "datasources": ["docker"],
+      "updateTypes": ["major"],
+      "labels": ["renovate/docker", "dependency/major"]
+    },
+    {
+      "datasources": ["docker"],
+      "updateTypes": ["minor"],
+      "labels": ["renovate/docker", "dependency/minor"]
+    },
+    {
+      "datasources": ["docker"],
+      "updateTypes": ["patch"],
+      "labels": ["renovate/docker", "dependency/patch"]
+    },
+    {
+      "datasources": ["pypi"],
+      "updateTypes": ["major"],
+      "labels": ["renovate/pypi", "dependency/major"]
+    },
+    {
+      "datasources": ["pypi"],
+      "updateTypes": ["minor"],
+      "labels": ["renovate/pypi", "dependency/minor"]
+    },
+    {
+      "datasources": ["pypi"],
+      "updateTypes": ["patch"],
+      "labels": ["renovate/pypi", "dependency/patch"]
+    }
+  ]
+}
