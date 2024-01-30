@@ -42,7 +42,7 @@ class App:
     self.config = AppConfig.parse_file(config_file)
 
   def load_register_config(self) -> None:
-    register_file = os.environ.get("REGISTER_FILE", "./modbus.yaml")
+    register_file = os.environ.get("REGISTER_FILE", "./sensors.yaml")
 
     with open(register_file) as file:
       self.register_config = yaml.load(file, yaml.Loader)

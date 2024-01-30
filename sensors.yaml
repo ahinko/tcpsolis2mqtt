@@ -11,7 +11,7 @@
   homeassistant:
     device: sensor
     state_class: measurement
-    device_class: power
+    device_class: powe
 
 - name: inverter_temp
   description: Inverter temperature
