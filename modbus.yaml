@@ -154,3 +154,228 @@
     device: sensor
     state_class:
     device_class: timestamp
+
+- name: dc1_voltage
+  description: DC1 Voltage
+  unit: V
+  active: true
+  modbus:
+    register: 3021
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: voltage
+
+- name: dc1_current
+  description: DC1 Current
+  unit: A
+  active: true
+  modbus:
+    register: 3022
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: current
+
+- name: dc2_voltage
+  description: DC2 Voltage
+  unit: V
+  active: true
+  modbus:
+    register: 3023
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: voltage
+
+- name: dc2_current
+  description: DC2 Current
+  unit: A
+  active: true
+  modbus:
+    register: 3024
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: current
+
+- name: dc3_voltage
+  description: DC3 Voltage
+  unit: V
+  active: true
+  modbus:
+    register: 3025
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: voltage
+
+- name: dc3_current
+  description: DC3 Current
+  unit: A
+  active: true
+  modbus:
+    register: 3026
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: current
+
+- name: dc4_voltage
+  description: DC4 Voltage
+  unit: V
+  active: true
+  modbus:
+    register: 3027
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: voltage
+
+- name: dc4_current
+  description: DC4 Current
+  unit: A
+  active: true
+  modbus:
+    register: 3028
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: current
+
+- name: ac_a_phase_voltage
+  description: AC (A phase) Voltage
+  unit: V
+  active: true
+  modbus:
+    register: 3033
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: voltage
+
+- name: ac_a_phase_current
+  description: AC (A phase) Current
+  unit: A
+  active: true
+  modbus:
+    register: 3036
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: current
+
+- name: ac_b_phase_voltage
+  description: AC (B phase) Voltage
+  unit: V
+  active: true
+  modbus:
+    register: 3034
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: voltage
+
+- name: ac_b_phase_current
+  description: AC (B phase) Current
+  unit: A
+  active: true
+  modbus:
+    register: 3037
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: current
+
+- name: ac_c_phase_voltage
+  description: AC (C phase) Voltage
+  unit: V
+  active: true
+  modbus:
+    register: 3035
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: voltage
+
+- name: ac_c_phase_current
+  description: AC (C phase) Current
+  unit: A
+  active: true
+  modbus:
+    register: 3038
+    read_type: register
+    function_code: 4
+    scale: 0.1
+    decimals: 1
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: current
+
+- name: grid_frequency
+  description: Grid Frequency
+  unit: Hz
+  active: true
+  modbus:
+    register: 3042
+    read_type: register
+    function_code: 4
+    scale: 0.01
+    decimals: 2
+  homeassistant:
+    device: sensor
+    state_class: measurement
+    device_class: frequency

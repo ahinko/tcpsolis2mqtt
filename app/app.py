@@ -20,7 +20,7 @@ from pymodbus.transaction import ModbusSocketFramer
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadDecoder
 
-VERSION="0.9.1"
+VERSION="0.9.2"
 
 class App:
   def __init__(self):
