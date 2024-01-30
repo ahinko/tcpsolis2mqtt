@@ -83,7 +83,7 @@ class App:
     if self.datalogger_offline:
       # loop over all measurements and set value to 0 and publish to mqtt
       for entry in self.register_config:
-        if not entry['active'] or 'read_type' not in entry['modbus'] :
+        if not entry['active']:
           continue
 
         if 'homeassistant' in entry and entry['homeassistant']['state_class'] == "measurement":
@@ -125,7 +125,7 @@ class App:
       if not self.datalogger_offline:
 
         for entry in self.register_config:
-          if not entry['active'] or 'read_type' not in entry['modbus'] :
+          if not entry['active'] or not 'modbus' in entry or 'read_type' not in entry['modbus']:
             continue
 
           try:
@@ -139,7 +139,7 @@ class App:
                 if 'decimals' in entry['modbus']:
                   value = round(value, entry['modbus']['decimals'])
 
-            if entry['modbus']['read_type'] == 'long':
+            elif entry['modbus']['read_type'] == 'long':
               message = client.read_input_registers(slave=self.config.datalogger.slave_id, address=entry['modbus']['register'], count=2)
               decoder = BinaryPayloadDecoder.fromRegisters(message.registers, byteorder=Endian.BIG, wordorder=Endian.BIG)
 
