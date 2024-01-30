@@ -6,6 +6,10 @@ datalogger:
   slave_id: 1
   poll_interval: 60
   poll_interval_if_off: 600
+  http:
+    enabled: True
+    user: admin
+    password: "123456789"
 inverter:
   name: Solis
   manufacturer: Ginlong Technologies
