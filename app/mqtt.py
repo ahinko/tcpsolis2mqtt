@@ -2,6 +2,7 @@ from paho.mqtt import client as mqtt_client
 from time import sleep
 import logging
 
+
 class Mqtt(mqtt_client.Client):
     def __init__(self, config):
         super().__init__(client_id=config.client_id, clean_session=True)
@@ -36,20 +37,22 @@ class Mqtt(mqtt_client.Client):
             logging.info("MQTT Failed to connect, return code %d\n", rc)
 
     def on_disconnect(self, client, userdata, rc):
-      logging.info("MQTT Disconnected with result code: %s", rc)
-      reconnect_count, reconnect_delay = 0, 1
-      while reconnect_count < 12:
-          logging.info("MQTT Reconnecting in %d seconds...", reconnect_delay)
-          sleep(reconnect_delay)
+        logging.info("MQTT Disconnected with result code: %s", rc)
+        reconnect_count, reconnect_delay = 0, 1
+        while reconnect_count < 12:
+            logging.info("MQTT Reconnecting in %d seconds...", reconnect_delay)
+            sleep(reconnect_delay)
 
-          try:
-              client.reconnect()
-              logging.info("MQTT Reconnected successfully!")
-              return
-          except Exception as err:
-              logging.error("MQTT %s. Reconnect failed. Retrying...", err)
+            try:
+                client.reconnect()
+                logging.info("MQTT Reconnected successfully!")
+                return
+            except Exception as err:
+                logging.error("MQTT %s. Reconnect failed. Retrying...", err)
 
-          reconnect_delay *= 2
-          reconnect_delay = min(reconnect_delay, 60)
-          reconnect_count += 1
-      logging.info("MQTT Reconnect failed after %s attempts. Exiting...", reconnect_count)
+            reconnect_delay *= 2
+            reconnect_delay = min(reconnect_delay, 60)
+            reconnect_count += 1
+        logging.info(
+            "MQTT Reconnect failed after %s attempts. Exiting...", reconnect_count
+        )
