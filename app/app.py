@@ -6,6 +6,7 @@ import logging
 import arrow
 import requests
 
+from typing import Any
 from config import AppConfig
 
 from time import sleep
@@ -49,11 +50,11 @@ class App:
         with open(register_file) as file:
             self.register_config = yaml.load(file, yaml.Loader)
 
-    def publish(self, topic, value, retain):
+    def publish(self, topic: str, payload: Any, retain: bool = False) -> None:
         if not self.config.mqtt.enabled:
             return
 
-        self.mqtt.publish(topic, value, retain)
+        self.mqtt.publish(topic, payload, retain=retain)
 
     def generate_ha_discovery_topics(self):
         if not self.config.mqtt.enabled:
@@ -78,6 +79,7 @@ class App:
                                 self.config.inverter.name,
                                 self.config.inverter.model,
                                 self.config.inverter.manufacturer,
+                                "http://" + self.config.datalogger.host,
                                 VERSION,
                             )
                         ),
