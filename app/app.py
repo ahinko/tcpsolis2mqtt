@@ -129,12 +129,13 @@ class App:
 
             value = None
 
-            if entry["http"]["inverter"] and ir_registers[entry["http"]["register"]]:
+            if entry["http"]["endpoint"] == "inverter" and ir_registers[entry["http"]["register"]]:
                 value = ir_registers[entry["http"]["register"]]
-            elif entry["http"]["moniter"] and mr_registers[entry["http"]["register"]]:
+            elif entry["http"]["endpoint"] == "moniter" and mr_registers[entry["http"]["register"]]:
                 value = mr_registers[entry["http"]["register"]]
 
             if value:
+                value = value.strip()
                 logging.info(
                     f"{entry['http']['register']} {entry['description']} : {value}"
                 )

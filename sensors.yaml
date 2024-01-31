@@ -454,7 +454,7 @@
 
 - name: wifi_signal
   description: Wifi signal
-  unit:
+  unit: "%"
   active: true
   http:
     endpoint: moniter
