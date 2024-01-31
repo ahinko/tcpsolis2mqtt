@@ -77,6 +77,7 @@ class App:
                                 self.config.inverter.name,
                                 self.config.inverter.model,
                                 self.config.inverter.manufacturer,
+                                "http://" + self.config.datalogger.host,
                                 VERSION,
                             )
                         ),

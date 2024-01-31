@@ -18,7 +18,8 @@ class DiscoverMsgSensor:
             "model": "",
             "manufacturer": "",
             "identifiers": "tcpsolis2mqtt",
-            "sw_version": "tcpsolis2mqtt",
+            "sw_version": "tcpsolis2mqtt ",
+            "configuration_url": "",
         },
     }
 
@@ -33,6 +34,7 @@ class DiscoverMsgSensor:
         device_name,
         device_model,
         device_manufacturer,
+        device_configuration_url,
         version,
     ):
         self.discover_msg = deepcopy(DiscoverMsgSensor.DISCOVERY_MSG)
@@ -46,6 +48,7 @@ class DiscoverMsgSensor:
         self.discover_msg["device"]["model"] = device_model
         self.discover_msg["device"]["manufacturer"] = device_manufacturer
         self.discover_msg["device"]["sw_version"] += str(version)
+        self.discover_msg["device"]["configuration_url"] = device_configuration_url
 
     def __str__(self):
         return json.dumps(self.discover_msg)
