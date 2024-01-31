@@ -8,16 +8,29 @@ class ConfigBaseModel(BaseModel):
         extra = Extra.forbid
 
 
+class HttpConfig(ConfigBaseModel):
+    enabled: bool = Field(title="Enable HTTP polling.", default=True)
+    user: Optional[str] = Field(default="admin", title="HTTP Username")
+    password: Optional[str] = Field(default="123456789", title="HTTP Password")
+
+    @validator("password", pre=True, always=True)
+    def validate_password(cls, v, values):
+        if (v is None) != (values["user"] is None):
+            raise ValueError("Password must be provided with username")
+        return v
+
+
 class DataLoggerConfig(ConfigBaseModel):
     host: str = Field(default="", title="Data logger Host")
     port: int = Field(default=1883, title="Data logger Port")
     slave_id: int = Field(default=1, title="Slave ID")
     poll_interval: int = Field(default=60, title="Poll interval")
     poll_interval_if_off: int = Field(default=600, title="Poll interval if off")
+    http: HttpConfig = Field(title="HTTP Configuration")
 
 
 class MqttConfig(ConfigBaseModel):
-    enabled: bool = Field(title="Enable MQTT Communication.", default=True)
+    enabled: bool = Field(title="Enable MQTT Communication", default=True)
     host: str = Field(default="", title="MQTT Host")
     port: int = Field(default=1883, title="MQTT Port")
     topic_prefix: str = Field(default="tcpsolis2mqtt", title="MQTT Topic Prefix")
@@ -30,7 +43,7 @@ class MqttConfig(ConfigBaseModel):
     @validator("password", pre=True, always=True)
     def validate_password(cls, v, values):
         if (v is None) != (values["user"] is None):
-            raise ValueError("Password must be provided with username.")
+            raise ValueError("Password must be provided with username")
         return v
 
 
@@ -42,9 +55,9 @@ class InverterConfig(ConfigBaseModel):
 
 class AppConfig(ConfigBaseModel):
     debug: bool = Field(title="Enable debug logging", default=False)
-    datalogger: DataLoggerConfig = Field(title="Data logger Configuration.")
-    mqtt: MqttConfig = Field(title="MQTT Configuration.")
-    inverter: InverterConfig = Field(title="Inverter Configuration.")
+    datalogger: DataLoggerConfig = Field(title="Data logger Configuration")
+    mqtt: MqttConfig = Field(title="MQTT Configuration")
+    inverter: InverterConfig = Field(title="Inverter Configuration")
 
     @classmethod
     def parse_file(cls, config_file):

@@ -4,6 +4,7 @@ import os
 import yaml
 import logging
 import arrow
+import requests
 
 from typing import Any
 from config import AppConfig
@@ -26,7 +27,7 @@ VERSION = "0.9.2"
 
 class App:
     def __init__(self):
-        self.datalogger_offline = False
+        self.datalogger_offline = True
         self.init_config()
         self.load_register_config()
 
@@ -90,9 +91,80 @@ class App:
                         + entry["homeassistant"]["device"]
                     )
 
+    def query_http(self):
+        # Check if http is enabled
+        if not self.config.datalogger.http.enabled:
+            return
+
+        try:
+            ir_url = f"http://{self.config.datalogger.host}/inverter.cgi"
+            ir = requests.get(
+                ir_url,
+                auth=(
+                    self.config.datalogger.http.user,
+                    self.config.datalogger.http.password,
+                ),
+            )
+
+            mr_url = f"http://{self.config.datalogger.host}/moniter.cgi"
+            mr = requests.get(
+                mr_url,
+                auth=(
+                    self.config.datalogger.http.user,
+                    self.config.datalogger.http.password,
+                ),
+            )
+        except Exception as e:
+            logging.error(f"Unable to poll HTTP endpoints {e}")
+            return
+
+        if not ir.status_code == 200 or not mr.status_code == 200:
+            logging.error("HTTP endpoints did not return 200")
+            return
+
+        ir_registers = ir.text.split(";")
+        mr_registers = mr.text.split(";")
+
+        for entry in self.register_config:
+            if (
+                not entry["active"]
+                or "http" not in entry
+                or "endpoint" not in entry["http"]
+                or "register" not in entry["http"]
+            ):
+                continue
+
+            value = None
+
+            if (
+                entry["http"]["endpoint"] == "inverter"
+                and ir_registers[entry["http"]["register"]]
+            ):
+                value = ir_registers[entry["http"]["register"]]
+            elif (
+                entry["http"]["endpoint"] == "moniter"
+                and mr_registers[entry["http"]["register"]]
+            ):
+                value = mr_registers[entry["http"]["register"]]
+
+            if value:
+                value = value.strip()
+                logging.info(
+                    f"{entry['http']['register']} {entry['description']} : {value}"
+                )
+                self.publish(
+                    f"{self.config.mqtt.topic_prefix}/{entry['name']}",
+                    value,
+                    retain=True,
+                )
+
     def datalogger_is_offline(self, *, offline: bool):
+        # Check if data logger was offline and now came back online
+        if self.datalogger_offline and not offline:
+            # Came online
+            self.query_http()
+
         self.datalogger_offline = offline
-        # publish "online/offline" to mqtt
 
         if self.datalogger_offline:
             # loop over all measurements and set value to 0 and publish to mqtt
@@ -115,6 +187,7 @@ class App:
                 )
 
     def main(self):
+        # Generate Home assistant MQTT discovery topics
         self.generate_ha_discovery_topics()
 
         while True:

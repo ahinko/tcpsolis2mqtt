@@ -379,3 +379,111 @@
     device: sensor
     state_class: measurement
     device_class: frequency
+
+- name: inverter_serial
+  description: Inverter Serial
+  unit:
+  active: true
+  http:
+    endpoint: inverter
+    register: 0
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: inverter_firmware
+  description: Inverter Firmware
+  unit:
+  active: true
+  http:
+    endpoint: inverter
+    register: 1
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: inverter_model
+  description: Inverter Model
+  unit:
+  active: true
+  http:
+    endpoint: inverter
+    register: 2
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: datalogger_serial
+  description: Datalogger Serial
+  unit:
+  active: true
+  http:
+    endpoint: moniter
+    register: 2
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: datalogger_firmware
+  description: Datalogger Firmware
+  unit:
+  active: true
+  http:
+    endpoint: moniter
+    register: 3
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: wifi_ssid
+  description: Wifi ssid
+  unit:
+  active: true
+  http:
+    endpoint: moniter
+    register: 8
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: wifi_signal
+  description: Wifi signal
+  unit: "%"
+  active: true
+  http:
+    endpoint: moniter
+    register: 9
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: wifi_ip
+  description: Wifi IP address
+  unit:
+  active: true
+  http:
+    endpoint: moniter
+    register: 10
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: wifi_mac
+  description: Wifi mac address
+  unit:
+  active: true
+  http:
+    endpoint: moniter
+    register: 11
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
