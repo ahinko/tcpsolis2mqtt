@@ -37,7 +37,7 @@ I've used the [solis2mqtt](https://github.com/incub77/solis2mqtt) repo as an ins
 ## Questions & Answers
 ### Does Solis Cloud still work?
 
-Most other integrations that I found all stated that Solis Cloud would not work when polling the datalogger over MODBUS. In my brief and short testing Solid Cloud still works, but not perfectly. I'm not sure if the newer firmware version makes a difference here or why its working. By "not perfectly" I mean that I can see that Solis Cloud is not always updated every 5 minutes. Sometimes it takes 15-20 minutes between updates but I've always seen that the datalogger sooner or later are able to send data to Solis Cloud. And if I stop the script/Docker container I always seen an update in Solid cloud within 10 minutes without having to restart the datalogger.
+Most other integrations that I found all stated that Solis Cloud would not work when polling the datalogger over MODBUS. In my brief and short testing Solid Cloud still works, but not perfectly. My guess is that most other integrations keeps the connection with the datalogger alive while this project closes the connection when its done and then reconnects when it's time for the next update. By "not perfectly" I mean that I can see that Solis Cloud is not always updated every 5 minutes. Sometimes it takes 15-20 minutes between updates but I've always seen that the datalogger sooner or later are able to send data to Solis Cloud. And if I stop the script/Docker container I always seen an update in Solid cloud within 10 minutes without having to restart the datalogger.
 
 ### Is it possible to control the inverter?
 
@@ -55,12 +55,18 @@ Maybe, I have no plans for it at the moment. My main goal is to get the data int
 Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`.
 
 ### Docker
-Please note that the `main` tag is the current development branch. This should be switched to `latest` or an actual version when releases start happening.
-
 `docker run -v "$(pwd)"/config.yaml:/usr/app/src/config.yaml:ro ghcr.io/ahinko/tcpsolis2mqtt:main`
 
 ### Docker compose
-TODO
+```yaml
+---
+version: "3.8"
 
-### Kubernetes/Helm
-TODO
+services:
+  tcpsolis2mqtt:
+    container_name: tcpsolis2mqtt
+    image: ghcr.io/ahinko/tcpsolis2mqtt:main
+    restart: always
+    volumes:
+      - ./config.yaml:/usr/app/src/config.yaml:ro
+```
