@@ -487,3 +487,178 @@
     device: sensor
     state_class:
     device_class:
+
+- name: working_status
+  description: Working status
+  unit:
+  active: true
+  modbus:
+    register: 3071
+    read_type: bit
+    function_code: 4
+    bit:
+      default_value: Offline
+      map:
+        0: Normal
+        1: Initializing
+        2: Grid off
+        3: Fault to stop
+        4: Standby
+        5: Derating
+        6: Limitating
+        7: Backup OV Load
+        8: Grid Surge (Warn)
+        9: Fan fault(Warn)
+        10: Unknown
+        11: AC SPD ERROR(VgSpdFail)
+        12: DC SPD ERROR(DcSpdFail)
+        13: Unknown
+        14: Unknown
+        15: Unknown
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: fault_code_01
+  description: Fault code 01
+  unit:
+  active: true
+  modbus:
+    register: 3066
+    read_type: bit
+    function_code: 4
+    bit:
+      default_value: None
+      map:
+        0: Grid Over
+        1: Grid Under
+        2: Grid Over Frequency§
+        3: Grid Under Frequency
+        4: Grid reverse current
+        5: No Grid
+        6: Grid Unbalance
+        7: Grid Frequency Fluctuation
+        8: Grid Over Current
+        9: Grid current tracking fault
+        10: Grid abnormal phase angle
+        11: Unknown
+        12: Unknown
+        13: Unknown
+        14: Unknown
+        15: Unknown
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: fault_code_02
+  description: Fault code 02
+  unit:
+  active: true
+  modbus:
+    register: 3067
+    read_type: bit
+    function_code: 4
+    bit:
+      default_value: None
+      map:
+        0: Over Voltage 0—No 1—Yes
+        1: Bus Over Voltage 0—No 1—Yes
+        2: Bus Unbalance 0—No 1—Yes
+        3: Bus Under Voltage 0—No 1—Yes
+        4: Bus Unbalance 2 0—No 1—Yes
+        5: DC(Channel A ) Over Current
+        6: DC(Channel B ) Over Current
+        7: DC interference
+        8: DC wrong polarity
+        9: PV mid-point grounding
+        10: Bus voltage not the same
+        11: Unknown
+        12: Unknown
+        13: Unknown
+        14: Unknown
+        15: Unknown
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: fault_code_03
+  description: Fault code 03
+  unit:
+  active: true
+  modbus:
+    register: 3068
+    read_type: bit
+    function_code: 4
+    bit:
+      default_value: None
+      map:
+        0: The Grid Interference Protection
+        1: The DSP Initial Protection
+        2: Temperature Protection
+        3: Ground Fault
+        4: Leakage Current Protection
+        5: Relay Protection
+        6: DSP_B Protection
+        7: DC Injection Protection
+        8: 12V Under Voltage Faulty
+        9: Leakage Current Check Protection
+        10: Under temperature protection
+        11: Unknown
+        12: Unknown
+        13: Unknown
+        14: Unknown
+        15: Unknown
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: fault_code_04
+  description: Fault code 04
+  unit:
+  active: true
+  modbus:
+    register: 3069
+    read_type: bit
+    function_code: 4
+    bit:
+      default_value: None
+      map:
+        0: AFCI Check Fault
+        1: AFCI Fault
+        2: Unknown
+        3: Unknown
+        4: Unknown
+        5: DSP self-check alarm
+        6: Grid INTF 02
+        7: Grid current sampling error
+        8: IGBT over current
+        9: Unknown
+        10: Unknown
+        11: Unknown
+        12: Unknown
+        13: Unknown
+        14: Unknown
+        15: Unknown
+  homeassistant:
+    device: sensor
+    state_class:
+    device_class:
+
+- name: alarm
+  description: Alarm
+  unit:
+  active: true
+  modbus:
+    register: 3066
+    read_type: alarm
+    function_code: 4
+  homeassistant:
+    device: binary_sensor
+    state_class:
+    device_class: problem
+    payload_on: "ON"
+    payload_off: "OFF"

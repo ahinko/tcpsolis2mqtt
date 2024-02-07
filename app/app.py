@@ -13,7 +13,7 @@ from time import sleep
 from datetime import datetime
 
 from mqtt import Mqtt
-from mqtt_discovery import DiscoverMsgSensor
+from mqtt_discovery import DiscoverMsgSensor, DiscoverMsgBinary
 
 from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
@@ -74,6 +74,30 @@ class App:
                                 entry["description"],
                                 entry["name"],
                                 entry["unit"],
+                                entry["homeassistant"]["device_class"],
+                                entry["homeassistant"]["state_class"],
+                                self.config.inverter.name,
+                                self.config.inverter.model,
+                                self.config.inverter.manufacturer,
+                                "http://" + self.config.datalogger.host,
+                                VERSION,
+                            )
+                        ),
+                        retain=True,
+                    )
+                elif entry["homeassistant"]["device"] == "binary_sensor":
+                    logging.debug(
+                        "Generating discovery topic for binary sensor: " + entry["name"]
+                    )
+                    self.publish(
+                        f"homeassistant/binary_sensor/{self.config.mqtt.topic_prefix}/{entry['name']}/config",
+                        str(
+                            DiscoverMsgBinary(
+                                self.config.mqtt.topic_prefix,
+                                entry["description"],
+                                entry["name"],
+                                entry["homeassistant"]["payload_on"],
+                                entry["homeassistant"]["payload_off"],
                                 entry["homeassistant"]["device_class"],
                                 entry["homeassistant"]["state_class"],
                                 self.config.inverter.name,
@@ -177,14 +201,37 @@ class App:
                     and entry["homeassistant"]["state_class"] == "measurement"
                 ):
                     value = 0
+                elif entry["modbus"]["read_type"] == "bit":
+                    value = entry["modbus"]["bit"]["default_value"]
                 else:
                     continue
+
+                logging.info(
+                    f"{entry['modbus']['register']} {entry['description']} : {value}"
+                )
 
                 self.publish(
                     f"{self.config.mqtt.topic_prefix}/{entry['name']}",
                     value,
                     retain=True,
                 )
+
+    def map_bit_to_value(self, mapping, default_value, binary_string):
+        # Remove '0b' prefix if present
+        if binary_string.startswith("0b"):
+            binary_string = binary_string[2:]
+
+        active = []
+        for i in range(min(len(binary_string), 16)):
+            if binary_string[-(i + 1)] == "1":
+                for value, status in mapping.items():
+                    if value == i:
+                        active.append(status)
+
+        if active:
+            return ", ".join(active)
+        else:
+            return default_value
 
     def main(self):
         # Generate Home assistant MQTT discovery topics
@@ -265,6 +312,50 @@ class App:
 
                             value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}{self.timezone_offset}"
 
+                        elif entry["modbus"]["read_type"] == "alarm":
+                            message = client.read_input_registers(
+                                slave=self.config.datalogger.slave_id,
+                                address=entry["modbus"]["register"],
+                                count=4,
+                            )
+
+                            value = "OFF"
+                            if (
+                                message.registers[0] != 0
+                                or message.registers[1] != 0
+                                or message.registers[2] != 0
+                                or message.registers[3] != 0
+                            ):
+                                value = "ON"
+
+                        elif entry["modbus"]["read_type"] == "bit":
+                            message = client.read_input_registers(
+                                slave=self.config.datalogger.slave_id,
+                                address=entry["modbus"]["register"],
+                                count=1,
+                            )
+
+                            if (
+                                "bit" in entry["modbus"]
+                                and "map" in entry["modbus"]["bit"]
+                            ):
+                                value = self.map_bit_to_value(
+                                    entry["modbus"]["bit"]["map"],
+                                    entry["modbus"]["bit"]["default_value"],
+                                    bin(message.registers[0]),
+                                )
+                            else:
+                                logging.error(
+                                    "Could not find needed modbus.bit.map config"
+                                )
+                                continue
+
+                        else:
+                            logging.error(
+                                f"modbus.readtype of {entry['modbus']['read_type']} not supported"
+                            )
+                            continue
+
                     except Exception as e:
                         logging.error(f"Error occured {e}")
 
@@ -273,6 +364,12 @@ class App:
                             and entry["homeassistant"]["state_class"] == "measurement"
                         ):
                             value = 0
+                        elif (
+                            modbus in entry
+                            and bit in entry["modbus"]
+                            and default_value in entry["modbus"]["bit"]
+                        ):
+                            value = entry["modbus"]["bit"]["default_value"]
                         else:
                             logging.error("Error while querying data logger: %s", e)
                             continue
