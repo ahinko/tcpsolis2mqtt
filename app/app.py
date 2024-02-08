@@ -365,9 +365,9 @@ class App:
                         ):
                             value = 0
                         elif (
-                            modbus in entry
-                            and bit in entry["modbus"]
-                            and default_value in entry["modbus"]["bit"]
+                            "modbus" in entry
+                            and "bit" in entry["modbus"]
+                            and "default_value" in entry["modbus"]["bit"]
                         ):
                             value = entry["modbus"]["bit"]["default_value"]
                         else:
