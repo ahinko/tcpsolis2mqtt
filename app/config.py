@@ -1,69 +1,56 @@
-from pydantic import BaseModel, Extra, Field, validator
-from typing import Optional
-import yaml
+from marshmallow import Schema, fields, validates_schema, ValidationError
 
 
-class ConfigBaseModel(BaseModel):
-    class Config:
-        extra = Extra.forbid
+class HttpConfig(Schema):
+    enabled = fields.Bool(required=False, load_default=True)
+    user = fields.Str(required=False, load_default="admin")
+    password = fields.Str(required=False, load_default="123456789")
+
+    @validates_schema()
+    def validate_user_requires_password(self, data, **kwargs):
+        if "user" in data and "password" not in data:
+            raise ValidationError("Password must be provided with username for HTTP")
 
 
-class HttpConfig(ConfigBaseModel):
-    enabled: bool = Field(title="Enable HTTP polling.", default=True)
-    user: Optional[str] = Field(default="admin", title="HTTP Username")
-    password: Optional[str] = Field(default="123456789", title="HTTP Password")
-
-    @validator("password", pre=True, always=True)
-    def validate_password(cls, v, values):
-        if (v is None) != (values["user"] is None):
-            raise ValueError("Password must be provided with username")
-        return v
+class DataLoggerConfig(Schema):
+    host = fields.Str(required=True)
+    port = fields.Int(required=False, load_default=502)
+    slave_id = fields.Int(required=False, load_default=1)
+    poll_interval = fields.Int(required=False, load_default=60)
+    poll_interval_if_off = fields.Int(required=False, load_default=600)
+    http = fields.Nested(HttpConfig(), required=False)
 
 
-class DataLoggerConfig(ConfigBaseModel):
-    host: str = Field(default="", title="Data logger Host")
-    port: int = Field(default=1883, title="Data logger Port")
-    slave_id: int = Field(default=1, title="Slave ID")
-    poll_interval: int = Field(default=60, title="Poll interval")
-    poll_interval_if_off: int = Field(default=600, title="Poll interval if off")
-    http: HttpConfig = Field(title="HTTP Configuration")
+class InverterConfig(Schema):
+    name = fields.Str(required=False, load_default="")
+    manufacturer = fields.Str(required=False, load_default="")
+    model = fields.Str(required=False, load_default="")
 
 
-class MqttConfig(ConfigBaseModel):
-    enabled: bool = Field(title="Enable MQTT Communication", default=True)
-    host: str = Field(default="", title="MQTT Host")
-    port: int = Field(default=1883, title="MQTT Port")
-    topic_prefix: str = Field(default="tcpsolis2mqtt", title="MQTT Topic Prefix")
-    client_id: str = Field(default="tcpsolis2mqtt", title="MQTT Client ID")
-    user: Optional[str] = Field(default="", title="MQTT Username")
-    password: Optional[str] = Field(default="", title="MQTT Password")
-    use_ssl: Optional[bool] = Field(default=False, title="MQTT Use SSL")
-    validate_cert: Optional[bool] = Field(default=False, title="MQTT Validate Cert")
+class MqttConfig(Schema):
+    enabled = fields.Bool(required=True)
+    host = fields.Str(required=False, allow_none=True, load_default="")
+    port = fields.Int(required=False, load_default=1883)
+    topic_prefix = fields.Str(required=False, load_default="tcpsolis2mqtt")
+    client_id = fields.Str(required=False, load_default="tcpsolis2mqtt")
+    user = fields.Str(required=False)
+    password = fields.Str(required=False)
+    use_ssl = fields.Bool(required=False, load_default=False)
+    validate_cert = fields.Bool(required=False, load_default=False)
 
-    @validator("password", pre=True, always=True)
-    def validate_password(cls, v, values):
-        if (v is None) != (values["user"] is None):
-            raise ValueError("Password must be provided with username")
-        return v
+    @validates_schema()
+    def validate_user_requires_password(self, data, **kwargs):
+        if "user" in data and "password" not in data:
+            raise ValidationError("Password must be provided with username for MQTT")
 
-
-class InverterConfig(ConfigBaseModel):
-    name: str = Field(default="", title="Inverter name")
-    manufacturer: str = Field(default="", title="Inverter manufacturer")
-    model: str = Field(default="", title="Inverter model")
+    @validates_schema()
+    def require_host_if_enabled(self, data, **kwargs):
+        if data["enabled"] and ("host" not in data or not data["host"]):
+            raise ValidationError("Host is required if MQTT is enabled")
 
 
-class AppConfig(ConfigBaseModel):
-    debug: bool = Field(title="Enable debug logging", default=False)
-    datalogger: DataLoggerConfig = Field(title="Data logger Configuration")
-    mqtt: MqttConfig = Field(title="MQTT Configuration")
-    inverter: InverterConfig = Field(title="Inverter Configuration")
-
-    @classmethod
-    def parse_file(cls, config_file):
-        with open(config_file) as f:
-            raw_config = f.read()
-
-        config = yaml.load(raw_config, yaml.Loader)
-
-        return cls.parse_obj(config)
+class AppConfig(Schema):
+    debug = fields.Bool(load_default=False)
+    datalogger = fields.Nested(DataLoggerConfig(), required=True)
+    inverter = fields.Nested(InverterConfig(), required=False)
+    mqtt = fields.Nested(MqttConfig(), required=True)

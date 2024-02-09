@@ -31,10 +31,10 @@ class App:
         self.init_config()
         self.load_register_config()
 
-        if self.config.mqtt.enabled:
-            self.mqtt = Mqtt(self.config.mqtt)
+        if self.config["mqtt"]["enabled"]:
+            self.mqtt = Mqtt(self.config["mqtt"])
 
-        log_level = logging.DEBUG if self.config.debug else logging.INFO
+        log_level = logging.DEBUG if self.config["debug"] else logging.INFO
         logging.getLogger().setLevel(log_level)
         pymodbus_apply_logging_config(logging.INFO)
 
@@ -42,22 +42,21 @@ class App:
 
     def init_config(self) -> None:
         config_file = os.environ.get("CONFIG_FILE", "./config.yaml")
-        self.config = AppConfig.parse_file(config_file)
+        with open(config_file) as f:
+            raw_config = f.read()
 
-    def load_register_config(self) -> None:
-        register_file = os.environ.get("REGISTER_FILE", "./sensors.yaml")
+        config = yaml.load(raw_config, yaml.Loader)
+        self.config = AppConfig().load(config)
 
-        with open(register_file) as file:
-            self.register_config = yaml.load(file, yaml.Loader)
 
     def publish(self, topic: str, payload: Any, retain: bool = False) -> None:
-        if not self.config.mqtt.enabled:
+        if not self.config["mqtt"]["enabled"]:
             return
 
         self.mqtt.publish(topic, payload, retain=retain)
 
     def generate_ha_discovery_topics(self):
-        if not self.config.mqtt.enabled:
+        if not self.config["mqtt"]["enabled"]:
             return
 
         for entry in self.register_config:
@@ -67,19 +66,19 @@ class App:
                         "Generating discovery topic for sensor: " + entry["name"]
                     )
                     self.publish(
-                        f"homeassistant/sensor/{self.config.mqtt.topic_prefix}/{entry['name']}/config",
+                        f"homeassistant/sensor/{self.config['mqtt']['topic_prefix']}/{sensor['name']}/config",
                         str(
                             DiscoverMsgSensor(
-                                self.config.mqtt.topic_prefix,
                                 entry["description"],
                                 entry["name"],
                                 entry["unit"],
                                 entry["homeassistant"]["device_class"],
                                 entry["homeassistant"]["state_class"],
-                                self.config.inverter.name,
-                                self.config.inverter.model,
-                                self.config.inverter.manufacturer,
-                                "http://" + self.config.datalogger.host,
+                                self.config["mqtt"]["topic_prefix"],
+                                self.config["inverter"]["name"],
+                                self.config["inverter"]["model"],
+                                self.config["inverter"]["manufacturer"],
+                                "http://" + self.config["datalogger"]["host"],
                                 VERSION,
                             )
                         ),
@@ -90,20 +89,20 @@ class App:
                         "Generating discovery topic for binary sensor: " + entry["name"]
                     )
                     self.publish(
-                        f"homeassistant/binary_sensor/{self.config.mqtt.topic_prefix}/{entry['name']}/config",
+                        f"homeassistant/binary_sensor/{self.config['mqtt']['topic_prefix']}/{sensor['name']}/config",
                         str(
                             DiscoverMsgBinary(
-                                self.config.mqtt.topic_prefix,
                                 entry["description"],
                                 entry["name"],
                                 entry["homeassistant"]["payload_on"],
                                 entry["homeassistant"]["payload_off"],
                                 entry["homeassistant"]["device_class"],
                                 entry["homeassistant"]["state_class"],
-                                self.config.inverter.name,
-                                self.config.inverter.model,
-                                self.config.inverter.manufacturer,
-                                "http://" + self.config.datalogger.host,
+                                self.config["mqtt"]["topic_prefix"],
+                                self.config["inverter"]["name"],
+                                self.config["inverter"]["model"],
+                                self.config["inverter"]["manufacturer"],
+                                "http://" + self.config["datalogger"]["host"],
                                 VERSION,
                             )
                         ),
@@ -117,25 +116,25 @@ class App:
 
     def query_http(self):
         # Check if http is enabled
-        if not self.config.datalogger.http.enabled:
+        if not self.config["datalogger"]["http"]["enabled"]:
             return
 
         try:
-            ir_url = f"http://{self.config.datalogger.host}/inverter.cgi"
+            ir_url = f"http://{self.config['datalogger']['host']}/inverter.cgi"
             ir = requests.get(
                 ir_url,
                 auth=(
-                    self.config.datalogger.http.user,
-                    self.config.datalogger.http.password,
+                    self.config["datalogger"]["http"]["user"],
+                    self.config["datalogger"]["http"]["password"],
                 ),
             )
 
-            mr_url = f"http://{self.config.datalogger.host}/moniter.cgi"
+            mr_url = f"http://{self.config['datalogger']['host']}/moniter.cgi"
             mr = requests.get(
                 mr_url,
                 auth=(
-                    self.config.datalogger.http.user,
-                    self.config.datalogger.http.password,
+                    self.config["datalogger"]["http"]["user"],
+                    self.config["datalogger"]["http"]["password"],
                 ),
             )
         except Exception as e:
@@ -174,10 +173,10 @@ class App:
             if value:
                 value = value.strip()
                 logging.info(
-                    f"{entry['http']['register']} {entry['description']} : {value}"
+                    f"{sensor['http']['register']} {sensor['description']} : {value}"
                 )
                 self.publish(
-                    f"{self.config.mqtt.topic_prefix}/{entry['name']}",
+                    f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
                     value,
                     retain=True,
                 )
@@ -207,11 +206,11 @@ class App:
                     continue
 
                 logging.info(
-                    f"{entry['modbus']['register']} {entry['description']} : {value}"
+                    f"{sensor['modbus']['register']} {sensor['description']} : {value}"
                 )
 
                 self.publish(
-                    f"{self.config.mqtt.topic_prefix}/{entry['name']}",
+                    f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
                     value,
                     retain=True,
                 )
@@ -242,8 +241,8 @@ class App:
 
             try:
                 client = ModbusTcpClient(
-                    self.config.datalogger.host,
-                    port=self.config.datalogger.port,
+                    self.config["datalogger"]["host"],
+                    port=self.config["datalogger"]["port"],
                     framer=ModbusSocketFramer,
                     timeout=10,
                     retry_on_empty=False,
@@ -256,7 +255,7 @@ class App:
             except ModbusException:
                 # in case we didn't have a exception before
                 logging.info(
-                    f"Datalogger not reachable, retrying in {self.config.datalogger.poll_interval_if_off} seconds"
+                    f"Datalogger not reachable, retrying in {self.config['datalogger']['poll_interval_if_off']} seconds"
                 )
                 if not self.datalogger_offline:
                     self.datalogger_is_offline(offline=True)
@@ -277,8 +276,8 @@ class App:
                     try:
                         if entry["modbus"]["read_type"] == "register":
                             message = client.read_input_registers(
-                                slave=self.config.datalogger.slave_id,
                                 address=entry["modbus"]["register"],
+                                slave=self.config["datalogger"]["slave_id"],
                                 count=1,
                             )
 
@@ -291,8 +290,8 @@ class App:
 
                         elif entry["modbus"]["read_type"] == "long":
                             message = client.read_input_registers(
-                                slave=self.config.datalogger.slave_id,
                                 address=entry["modbus"]["register"],
+                                slave=self.config["datalogger"]["slave_id"],
                                 count=2,
                             )
                             decoder = BinaryPayloadDecoder.fromRegisters(
@@ -305,8 +304,8 @@ class App:
 
                         elif entry["modbus"]["read_type"] == "composed_datetime":
                             message = client.read_input_registers(
-                                slave=self.config.datalogger.slave_id,
                                 address=entry["modbus"]["register"],
+                                slave=self.config["datalogger"]["slave_id"],
                                 count=6,
                             )
 
@@ -314,8 +313,8 @@ class App:
 
                         elif entry["modbus"]["read_type"] == "alarm":
                             message = client.read_input_registers(
-                                slave=self.config.datalogger.slave_id,
                                 address=entry["modbus"]["register"],
+                                slave=self.config["datalogger"]["slave_id"],
                                 count=4,
                             )
 
@@ -330,8 +329,8 @@ class App:
 
                         elif entry["modbus"]["read_type"] == "bit":
                             message = client.read_input_registers(
-                                slave=self.config.datalogger.slave_id,
                                 address=entry["modbus"]["register"],
+                                slave=self.config["datalogger"]["slave_id"],
                                 count=1,
                             )
 
@@ -380,7 +379,7 @@ class App:
                         )
 
                     self.publish(
-                        f"{self.config.mqtt.topic_prefix}/{entry['name']}",
+                        f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
                         value,
                         retain=True,
                     )
@@ -389,9 +388,9 @@ class App:
 
             # wait with next poll configured interval, or if datalogger is not responding ten times the interval
             sleep_duration = (
-                self.config.datalogger.poll_interval
+                self.config["datalogger"]["poll_interval"]
                 if not self.datalogger_offline
-                else self.config.datalogger.poll_interval_if_off
+                else self.config["datalogger"]["poll_interval_if_off"]
             )
             logging.debug(f"Datalogger scanning paused for {sleep_duration} seconds")
             sleep(sleep_duration)

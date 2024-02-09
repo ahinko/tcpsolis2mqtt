@@ -5,16 +5,16 @@ import logging
 
 class Mqtt(mqtt_client.Client):
     def __init__(self, config):
-        super().__init__(client_id=config.client_id, clean_session=True)
+        super().__init__(client_id=config["client_id"], clean_session=True)
         self.enable_logger()
-        self.username_pw_set(config.user, config.password)
-        if config.use_ssl:
+        self.username_pw_set(config["user"], config["password"])
+        if config["use_ssl"]:
             self.tls_set()
-        if config.use_ssl and not config.validate_cert:
+        if config["use_ssl"] and not config["validate_cert"]:
             self.tls_insecure_set(True)
         self.on_connect = self.on_connect
         self.on_disconnect = self.on_disconnect
-        self.connect(config.host, config.port)
+        self.connect(config["host"], config["port"])
         self.loop_start()
 
     def __del__(self):
