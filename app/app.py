@@ -8,6 +8,7 @@ import requests
 
 from typing import Any
 from config import AppConfig
+from sensors import Sensor
 
 from time import sleep
 from datetime import datetime
@@ -22,14 +23,14 @@ from pymodbus.transaction import ModbusSocketFramer
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadDecoder
 
-VERSION = "0.9.2"
+VERSION = "0.9.5"
 
 
 class App:
     def __init__(self):
         self.datalogger_offline = True
         self.init_config()
-        self.load_register_config()
+        self.load_sensors_config()
 
         if self.config["mqtt"]["enabled"]:
             self.mqtt = Mqtt(self.config["mqtt"])
@@ -48,6 +49,13 @@ class App:
         config = yaml.load(raw_config, yaml.Loader)
         self.config = AppConfig().load(config)
 
+    def load_sensors_config(self) -> None:
+        sensors_file = os.environ.get("SENSORS_FILE", "./sensors.yaml")
+
+        with open(sensors_file, "r") as file:
+            yaml_data = yaml.safe_load(file)
+
+        self.sensors_config = Sensor(many=True).load(yaml_data)
 
     def publish(self, topic: str, payload: Any, retain: bool = False) -> None:
         if not self.config["mqtt"]["enabled"]:
@@ -59,22 +67,22 @@ class App:
         if not self.config["mqtt"]["enabled"]:
             return
 
-        for entry in self.register_config:
-            if entry["active"] and "homeassistant" in entry:
-                if entry["homeassistant"]["device"] == "sensor":
+        for sensor in self.sensors_config:
+            if sensor["active"] and "homeassistant" in sensor:
+                if sensor["homeassistant"]["device"] == "sensor":
                     logging.debug(
-                        "Generating discovery topic for sensor: " + entry["name"]
+                        "Generating discovery topic for sensor: " + sensor["name"]
                     )
                     self.publish(
                         f"homeassistant/sensor/{self.config['mqtt']['topic_prefix']}/{sensor['name']}/config",
                         str(
                             DiscoverMsgSensor(
-                                entry["description"],
-                                entry["name"],
-                                entry["unit"],
-                                entry["homeassistant"]["device_class"],
-                                entry["homeassistant"]["state_class"],
                                 self.config["mqtt"]["topic_prefix"],
+                                sensor["description"],
+                                sensor["name"],
+                                sensor["unit"],
+                                sensor["homeassistant"]["device_class"],
+                                sensor["homeassistant"]["state_class"],
                                 self.config["inverter"]["name"],
                                 self.config["inverter"]["model"],
                                 self.config["inverter"]["manufacturer"],
@@ -84,21 +92,22 @@ class App:
                         ),
                         retain=True,
                     )
-                elif entry["homeassistant"]["device"] == "binary_sensor":
+                elif sensor["homeassistant"]["device"] == "binary_sensor":
                     logging.debug(
-                        "Generating discovery topic for binary sensor: " + entry["name"]
+                        "Generating discovery topic for binary sensor: "
+                        + sensor["name"]
                     )
                     self.publish(
                         f"homeassistant/binary_sensor/{self.config['mqtt']['topic_prefix']}/{sensor['name']}/config",
                         str(
                             DiscoverMsgBinary(
-                                entry["description"],
-                                entry["name"],
-                                entry["homeassistant"]["payload_on"],
-                                entry["homeassistant"]["payload_off"],
-                                entry["homeassistant"]["device_class"],
-                                entry["homeassistant"]["state_class"],
                                 self.config["mqtt"]["topic_prefix"],
+                                sensor["description"],
+                                sensor["name"],
+                                sensor["homeassistant"]["payload_on"],
+                                sensor["homeassistant"]["payload_off"],
+                                sensor["homeassistant"]["device_class"],
+                                sensor["homeassistant"]["state_class"],
                                 self.config["inverter"]["name"],
                                 self.config["inverter"]["model"],
                                 self.config["inverter"]["manufacturer"],
@@ -111,7 +120,7 @@ class App:
                 else:
                     logging.error(
                         "Unknown homeassistant device type: "
-                        + entry["homeassistant"]["device"]
+                        + sensor["homeassistant"]["device"]
                     )
 
     def query_http(self):
@@ -148,27 +157,27 @@ class App:
         ir_registers = ir.text.split(";")
         mr_registers = mr.text.split(";")
 
-        for entry in self.register_config:
+        for sensor in self.sensors_config:
             if (
-                not entry["active"]
-                or "http" not in entry
-                or "endpoint" not in entry["http"]
-                or "register" not in entry["http"]
+                not sensor["active"]
+                or "http" not in sensor
+                or "endpoint" not in sensor["http"]
+                or "register" not in sensor["http"]
             ):
                 continue
 
             value = None
 
             if (
-                entry["http"]["endpoint"] == "inverter"
-                and ir_registers[entry["http"]["register"]]
+                sensor["http"]["endpoint"] == "inverter"
+                and ir_registers[sensor["http"]["register"]]
             ):
-                value = ir_registers[entry["http"]["register"]]
+                value = ir_registers[sensor["http"]["register"]]
             elif (
-                entry["http"]["endpoint"] == "moniter"
-                and mr_registers[entry["http"]["register"]]
+                sensor["http"]["endpoint"] == "moniter"
+                and mr_registers[sensor["http"]["register"]]
             ):
-                value = mr_registers[entry["http"]["register"]]
+                value = mr_registers[sensor["http"]["register"]]
 
             if value:
                 value = value.strip()
@@ -191,17 +200,17 @@ class App:
 
         if self.datalogger_offline:
             # loop over all measurements and set value to 0 and publish to mqtt
-            for entry in self.register_config:
-                if not entry["active"]:
+            for sensor in self.sensors_config:
+                if not sensor["active"]:
                     continue
 
                 if (
-                    "homeassistant" in entry
-                    and entry["homeassistant"]["state_class"] == "measurement"
+                    "homeassistant" in sensor
+                    and sensor["homeassistant"]["state_class"] == "measurement"
                 ):
                     value = 0
-                elif entry["modbus"]["read_type"] == "bit":
-                    value = entry["modbus"]["bit"]["default_value"]
+                elif sensor["modbus"]["read_type"] == "bit":
+                    value = sensor["modbus"]["bit"]["default_value"]
                 else:
                     continue
 
@@ -265,33 +274,33 @@ class App:
 
             # Only move on if datalogger is online
             if not self.datalogger_offline:
-                for entry in self.register_config:
+                for sensor in self.sensors_config:
                     if (
-                        not entry["active"]
-                        or "modbus" not in entry
-                        or "read_type" not in entry["modbus"]
+                        not sensor["active"]
+                        or "modbus" not in sensor
+                        or "read_type" not in sensor["modbus"]
                     ):
                         continue
 
                     try:
-                        if entry["modbus"]["read_type"] == "register":
+                        if sensor["modbus"]["read_type"] == "register":
                             message = client.read_input_registers(
-                                address=entry["modbus"]["register"],
                                 slave=self.config["datalogger"]["slave_id"],
+                                address=sensor["modbus"]["register"],
                                 count=1,
                             )
 
                             value = message.registers[0]
-                            if "scale" in entry["modbus"]:
-                                value = float(value) * entry["modbus"]["scale"]
+                            if "scale" in sensor["modbus"]:
+                                value = float(value) * sensor["modbus"]["scale"]
 
-                                if "decimals" in entry["modbus"]:
-                                    value = round(value, entry["modbus"]["decimals"])
+                                if "decimals" in sensor["modbus"]:
+                                    value = round(value, sensor["modbus"]["decimals"])
 
-                        elif entry["modbus"]["read_type"] == "long":
+                        elif sensor["modbus"]["read_type"] == "long":
                             message = client.read_input_registers(
-                                address=entry["modbus"]["register"],
                                 slave=self.config["datalogger"]["slave_id"],
+                                address=sensor["modbus"]["register"],
                                 count=2,
                             )
                             decoder = BinaryPayloadDecoder.fromRegisters(
@@ -302,19 +311,19 @@ class App:
 
                             value = str(decoder.decode_32bit_int())
 
-                        elif entry["modbus"]["read_type"] == "composed_datetime":
+                        elif sensor["modbus"]["read_type"] == "composed_datetime":
                             message = client.read_input_registers(
-                                address=entry["modbus"]["register"],
                                 slave=self.config["datalogger"]["slave_id"],
+                                address=sensor["modbus"]["register"],
                                 count=6,
                             )
 
                             value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}{self.timezone_offset}"
 
-                        elif entry["modbus"]["read_type"] == "alarm":
+                        elif sensor["modbus"]["read_type"] == "alarm":
                             message = client.read_input_registers(
-                                address=entry["modbus"]["register"],
                                 slave=self.config["datalogger"]["slave_id"],
+                                address=sensor["modbus"]["register"],
                                 count=4,
                             )
 
@@ -327,20 +336,20 @@ class App:
                             ):
                                 value = "ON"
 
-                        elif entry["modbus"]["read_type"] == "bit":
+                        elif sensor["modbus"]["read_type"] == "bit":
                             message = client.read_input_registers(
-                                address=entry["modbus"]["register"],
                                 slave=self.config["datalogger"]["slave_id"],
+                                address=sensor["modbus"]["register"],
                                 count=1,
                             )
 
                             if (
-                                "bit" in entry["modbus"]
-                                and "map" in entry["modbus"]["bit"]
+                                "bit" in sensor["modbus"]
+                                and "map" in sensor["modbus"]["bit"]
                             ):
                                 value = self.map_bit_to_value(
-                                    entry["modbus"]["bit"]["map"],
-                                    entry["modbus"]["bit"]["default_value"],
+                                    sensor["modbus"]["bit"]["map"],
+                                    sensor["modbus"]["bit"]["default_value"],
                                     bin(message.registers[0]),
                                 )
                             else:
@@ -351,7 +360,7 @@ class App:
 
                         else:
                             logging.error(
-                                f"modbus.readtype of {entry['modbus']['read_type']} not supported"
+                                f"modbus.readtype of {sensor['modbus']['read_type']} not supported"
                             )
                             continue
 
@@ -359,23 +368,23 @@ class App:
                         logging.error(f"Error occured {e}")
 
                         if (
-                            "homeassistant" in entry
-                            and entry["homeassistant"]["state_class"] == "measurement"
+                            "homeassistant" in sensor
+                            and sensor["homeassistant"]["state_class"] == "measurement"
                         ):
                             value = 0
                         elif (
-                            "modbus" in entry
-                            and "bit" in entry["modbus"]
-                            and "default_value" in entry["modbus"]["bit"]
+                            "modbus" in sensor
+                            and "bit" in sensor["modbus"]
+                            and "default_value" in sensor["modbus"]["bit"]
                         ):
-                            value = entry["modbus"]["bit"]["default_value"]
+                            value = sensor["modbus"]["bit"]["default_value"]
                         else:
                             logging.error("Error while querying data logger: %s", e)
                             continue
                     else:
                         self.datalogger_is_offline(offline=False)
                         logging.info(
-                            f"{entry['modbus']['register']} {entry['description']} : {value}"
+                            f"{sensor['modbus']['register']} {sensor['description']} : {value}"
                         )
 
                     self.publish(
