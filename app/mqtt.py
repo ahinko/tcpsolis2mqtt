@@ -5,7 +5,11 @@ import logging
 
 class Mqtt(mqtt_client.Client):
     def __init__(self, config):
-        super().__init__(client_id=config["client_id"], clean_session=True)
+        super().__init__(
+            callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2,
+            client_id=config["client_id"],
+            clean_session=True
+        )
         self.enable_logger()
         self.username_pw_set(config["user"], config["password"])
         if config["use_ssl"]:
@@ -20,24 +24,14 @@ class Mqtt(mqtt_client.Client):
     def __del__(self):
         self.disconnect()
 
-    def on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
+    def on_connect(self, client, userdata, flags, reason_code, properties):
+        if reason_code == 0:
             logging.info("MQTT Connected to Broker!")
-        elif rc == 1:
-            logging.info("MQTT Connection refused - incorrect protocol version")
-        elif rc == 2:
-            logging.info("MQTT Connection refused - invalid client identifier")
-        elif rc == 3:
-            logging.info("MQTT Connection refused - server unavailable")
-        elif rc == 4:
-            logging.info("MQTT Connection refused - bad username or password")
-        elif rc == 5:
-            logging.info("MQTT Connection refused - not authorised")
         else:
-            logging.info("MQTT Failed to connect, return code %d\n", rc)
+            logging.info("MQTT Failed to connect, return code: %s", reason_code)
 
-    def on_disconnect(self, client, userdata, rc):
-        logging.info("MQTT Disconnected with result code: %s", rc)
+    def on_disconnect(self, client, userdata, flags, reason_code, properties):
+        logging.info("MQTT Disconnected with result code: %s", reason_code)
         reconnect_count, reconnect_delay = 0, 1
         while reconnect_count < 12:
             logging.info("MQTT Reconnecting in %d seconds...", reconnect_delay)
