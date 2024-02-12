@@ -55,7 +55,7 @@ Maybe, I have no plans for it at the moment. My main goal is to get the data int
 Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`.
 
 ### Docker
-`docker run -v "$(pwd)"/config.yaml:/usr/app/src/config.yaml:ro ghcr.io/ahinko/tcpsolis2mqtt:main`
+`docker run -v "$(pwd)"/config.yaml:/usr/app/src/config.yaml:ro ghcr.io/ahinko/tcpsolis2mqtt:latest`
 
 ### Docker compose
 ```yaml
@@ -65,7 +65,7 @@ version: "3.8"
 services:
   tcpsolis2mqtt:
     container_name: tcpsolis2mqtt
-    image: ghcr.io/ahinko/tcpsolis2mqtt:main
+    image: ghcr.io/ahinko/tcpsolis2mqtt:latest
     restart: always
     volumes:
       - ./config.yaml:/usr/app/src/config.yaml:ro
