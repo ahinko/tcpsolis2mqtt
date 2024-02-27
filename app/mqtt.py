@@ -8,7 +8,7 @@ class Mqtt(mqtt_client.Client):
         super().__init__(
             callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2,
             client_id=config["client_id"],
-            clean_session=True
+            clean_session=True,
         )
         self.enable_logger()
         self.username_pw_set(config["user"], config["password"])
