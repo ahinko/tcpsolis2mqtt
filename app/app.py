@@ -272,9 +272,8 @@ class App:
             else:
                 self.datalogger_is_offline(offline=False)
 
-            # Only move on if datalogger is online
-
             for sensor in self.sensors_config:
+                # Check if sensor is active and has a modbus read type, also check if the datalogger is online
                 if (
                     not sensor["active"]
                     or "modbus" not in sensor
