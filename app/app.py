@@ -273,125 +273,133 @@ class App:
                 self.datalogger_is_offline(offline=False)
 
             # Only move on if datalogger is online
-            if not self.datalogger_offline:
-                for sensor in self.sensors_config:
-                    if (
-                        not sensor["active"]
-                        or "modbus" not in sensor
-                        or "read_type" not in sensor["modbus"]
-                    ):
-                        continue
 
-                    try:
-                        if sensor["modbus"]["read_type"] == "register":
-                            message = client.read_input_registers(
-                                slave=self.config["datalogger"]["slave_id"],
-                                address=sensor["modbus"]["register"],
-                                count=1,
-                            )
+            for sensor in self.sensors_config:
+                if (
+                    not sensor["active"]
+                    or "modbus" not in sensor
+                    or "read_type" not in sensor["modbus"]
+                    or self.datalogger_offline
+                ):
+                    continue
 
-                            value = message.registers[0]
-                            if "scale" in sensor["modbus"]:
-                                value = float(value) * sensor["modbus"]["scale"]
-
-                                if "decimals" in sensor["modbus"]:
-                                    value = round(value, sensor["modbus"]["decimals"])
-
-                        elif sensor["modbus"]["read_type"] == "long":
-                            message = client.read_input_registers(
-                                slave=self.config["datalogger"]["slave_id"],
-                                address=sensor["modbus"]["register"],
-                                count=2,
-                            )
-                            decoder = BinaryPayloadDecoder.fromRegisters(
-                                message.registers,
-                                byteorder=Endian.BIG,
-                                wordorder=Endian.BIG,
-                            )
-
-                            value = str(decoder.decode_32bit_int())
-
-                        elif sensor["modbus"]["read_type"] == "composed_datetime":
-                            message = client.read_input_registers(
-                                slave=self.config["datalogger"]["slave_id"],
-                                address=sensor["modbus"]["register"],
-                                count=6,
-                            )
-
-                            value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}{self.timezone_offset}"
-
-                        elif sensor["modbus"]["read_type"] == "alarm":
-                            message = client.read_input_registers(
-                                slave=self.config["datalogger"]["slave_id"],
-                                address=sensor["modbus"]["register"],
-                                count=4,
-                            )
-
-                            value = "OFF"
-                            if (
-                                message.registers[0] != 0
-                                or message.registers[1] != 0
-                                or message.registers[2] != 0
-                                or message.registers[3] != 0
-                            ):
-                                value = "ON"
-
-                        elif sensor["modbus"]["read_type"] == "bit":
-                            message = client.read_input_registers(
-                                slave=self.config["datalogger"]["slave_id"],
-                                address=sensor["modbus"]["register"],
-                                count=1,
-                            )
-
-                            if (
-                                "bit" in sensor["modbus"]
-                                and "map" in sensor["modbus"]["bit"]
-                            ):
-                                value = self.map_bit_to_value(
-                                    sensor["modbus"]["bit"]["map"],
-                                    sensor["modbus"]["bit"]["default_value"],
-                                    bin(message.registers[0]),
-                                )
-                            else:
-                                logging.error(
-                                    "Could not find needed modbus.bit.map config"
-                                )
-                                continue
-
-                        else:
-                            logging.error(
-                                f"modbus.readtype of {sensor['modbus']['read_type']} not supported"
-                            )
-                            continue
-
-                    except Exception as e:
-                        logging.error(f"Error occured {e}")
-
-                        if (
-                            "homeassistant" in sensor
-                            and sensor["homeassistant"]["state_class"] == "measurement"
-                        ):
-                            value = 0
-                        elif (
-                            "modbus" in sensor
-                            and "bit" in sensor["modbus"]
-                            and "default_value" in sensor["modbus"]["bit"]
-                        ):
-                            value = sensor["modbus"]["bit"]["default_value"]
-                        else:
-                            logging.error("Error while querying data logger: %s", e)
-                            continue
-                    else:
-                        self.datalogger_is_offline(offline=False)
-                        logging.info(
-                            f"{sensor['modbus']['register']} {sensor['description']} : {value}"
+                try:
+                    if sensor["modbus"]["read_type"] == "register":
+                        message = client.read_input_registers(
+                            slave=self.config["datalogger"]["slave_id"],
+                            address=sensor["modbus"]["register"],
+                            count=1,
                         )
 
-                    self.publish(
-                        f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
-                        value,
-                        retain=True,
+                        value = message.registers[0]
+                        if "scale" in sensor["modbus"]:
+                            value = float(value) * sensor["modbus"]["scale"]
+
+                            if "decimals" in sensor["modbus"]:
+                                value = round(value, sensor["modbus"]["decimals"])
+
+                    elif sensor["modbus"]["read_type"] == "long":
+                        message = client.read_input_registers(
+                            slave=self.config["datalogger"]["slave_id"],
+                            address=sensor["modbus"]["register"],
+                            count=2,
+                        )
+                        decoder = BinaryPayloadDecoder.fromRegisters(
+                            message.registers,
+                            byteorder=Endian.BIG,
+                            wordorder=Endian.BIG,
+                        )
+
+                        value = str(decoder.decode_32bit_int())
+
+                    elif sensor["modbus"]["read_type"] == "composed_datetime":
+                        message = client.read_input_registers(
+                            slave=self.config["datalogger"]["slave_id"],
+                            address=sensor["modbus"]["register"],
+                            count=6,
+                        )
+
+                        value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}{self.timezone_offset}"
+
+                    elif sensor["modbus"]["read_type"] == "alarm":
+                        message = client.read_input_registers(
+                            slave=self.config["datalogger"]["slave_id"],
+                            address=sensor["modbus"]["register"],
+                            count=4,
+                        )
+
+                        value = "OFF"
+                        if (
+                            message.registers[0] != 0
+                            or message.registers[1] != 0
+                            or message.registers[2] != 0
+                            or message.registers[3] != 0
+                        ):
+                            value = "ON"
+
+                    elif sensor["modbus"]["read_type"] == "bit":
+                        message = client.read_input_registers(
+                            slave=self.config["datalogger"]["slave_id"],
+                            address=sensor["modbus"]["register"],
+                            count=1,
+                        )
+
+                        if (
+                            "bit" in sensor["modbus"]
+                            and "map" in sensor["modbus"]["bit"]
+                        ):
+                            value = self.map_bit_to_value(
+                                sensor["modbus"]["bit"]["map"],
+                                sensor["modbus"]["bit"]["default_value"],
+                                bin(message.registers[0]),
+                            )
+                        else:
+                            logging.error("Could not find needed modbus.bit.map config")
+                            continue
+
+                    else:
+                        logging.error(
+                            f"modbus.readtype of {sensor['modbus']['read_type']} not supported"
+                        )
+                        continue
+
+                except Exception as e:
+                    logging.error(f"Error occured {e}")
+
+                    if (
+                        "homeassistant" in sensor
+                        and sensor["homeassistant"]["state_class"] == "measurement"
+                    ):
+                        value = 0
+                    elif (
+                        "modbus" in sensor
+                        and "bit" in sensor["modbus"]
+                        and "default_value" in sensor["modbus"]["bit"]
+                    ):
+                        value = sensor["modbus"]["bit"]["default_value"]
+                    else:
+                        logging.error("Error while querying data logger: %s", e)
+                        continue
+
+                except ModbusException:
+                    # in case we didn't have a exception before
+                    logging.info(
+                        f"Datalogger no longer reachable, retrying in {self.config['datalogger']['poll_interval_if_off']} seconds"
                     )
+                    if not self.datalogger_offline:
+                        self.datalogger_is_offline(offline=True)
+
+                else:
+                    self.datalogger_is_offline(offline=False)
+                    logging.info(
+                        f"{sensor['modbus']['register']} {sensor['description']} : {value}"
+                    )
+
+                self.publish(
+                    f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
+                    value,
+                    retain=True,
+                )
 
             client.close()
 
