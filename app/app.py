@@ -209,14 +209,19 @@ class App:
                     and sensor["homeassistant"]["state_class"] == "measurement"
                 ):
                     value = 0
-                elif sensor["modbus"]["read_type"] == "bit":
+                elif "modbus" in sensor and sensor["modbus"]["read_type"] == "bit":
                     value = sensor["modbus"]["bit"]["default_value"]
                 else:
                     continue
 
-                logging.info(
-                    f"{sensor['modbus']['register']} {sensor['description']} : {value}"
-                )
+                if "modbus" in sensor:
+                    logging.info(
+                        f"{sensor['modbus']['register']} {sensor['description']} : {value}"
+                    )
+                else:
+                    logging.info(
+                        f"{sensor['http']['register']} {sensor['description']} : {value}"
+                    )
 
                 self.publish(
                     f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
