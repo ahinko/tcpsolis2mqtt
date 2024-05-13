@@ -18,7 +18,7 @@ from mqtt_discovery import DiscoverMsgSensor, DiscoverMsgBinary
 
 from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
-from pymodbus.exceptions import ModbusException
+from pymodbus.exceptions import ModbusException, ModbusIOException
 from pymodbus.transaction import ModbusSocketFramer
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadDecoder
@@ -367,7 +367,7 @@ class App:
                         )
                         continue
 
-                except Exception as e:
+                except (ModbusIOException, Exception) as e:
                     logging.error(f"Error occured {e}")
 
                     if (
