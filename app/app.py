@@ -18,7 +18,7 @@ from mqtt_discovery import DiscoverMsgSensor, DiscoverMsgBinary
 
 from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
-from pymodbus.exceptions import ModbusException, ModbusIOException
+from pymodbus.exceptions import ModbusException
 from pymodbus.transaction import ModbusSocketFramer
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadDecoder
@@ -295,6 +295,11 @@ class App:
                             count=1,
                         )
 
+                        if message.isError():
+                            raise Exception(
+                                "Could not read register, might have lost connection"
+                            )
+
                         value = message.registers[0]
                         if "scale" in sensor["modbus"]:
                             value = float(value) * sensor["modbus"]["scale"]
@@ -308,6 +313,12 @@ class App:
                             address=sensor["modbus"]["register"],
                             count=2,
                         )
+
+                        if message.isError():
+                            raise Exception(
+                                "Could not read register, might have lost connection"
+                            )
+
                         decoder = BinaryPayloadDecoder.fromRegisters(
                             message.registers,
                             byteorder=Endian.BIG,
@@ -323,6 +334,11 @@ class App:
                             count=6,
                         )
 
+                        if message.isError():
+                            raise Exception(
+                                "Could not read register, might have lost connection"
+                            )
+
                         value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}{self.timezone_offset}"
 
                     elif sensor["modbus"]["read_type"] == "alarm":
@@ -331,6 +347,11 @@ class App:
                             address=sensor["modbus"]["register"],
                             count=4,
                         )
+
+                        if message.isError():
+                            raise Exception(
+                                "Could not read register, might have lost connection"
+                            )
 
                         value = "OFF"
                         if (
@@ -347,6 +368,11 @@ class App:
                             address=sensor["modbus"]["register"],
                             count=1,
                         )
+
+                        if message.isError():
+                            raise Exception(
+                                "Could not read register, might have lost connection"
+                            )
 
                         if (
                             "bit" in sensor["modbus"]
@@ -367,8 +393,17 @@ class App:
                         )
                         continue
 
-                except (ModbusIOException, Exception) as e:
+                except Exception as e:
                     logging.error(f"Error occured {e}")
+
+                    if str(e) == "Could not read register, might have lost connection":
+                        logging.info(
+                            f"Datalogger no longer reachable, retrying in {self.config['datalogger']['poll_interval_if_off']} seconds"
+                        )
+                        if not self.datalogger_offline:
+                            self.datalogger_is_offline(offline=True)
+
+                        continue
 
                     if (
                         "homeassistant" in sensor
@@ -384,14 +419,6 @@ class App:
                     else:
                         logging.error("Error while querying data logger: %s", e)
                         continue
-
-                except ModbusException:
-                    # in case we didn't have a exception before
-                    logging.info(
-                        f"Datalogger no longer reachable, retrying in {self.config['datalogger']['poll_interval_if_off']} seconds"
-                    )
-                    if not self.datalogger_offline:
-                        self.datalogger_is_offline(offline=True)
 
                 else:
                     self.datalogger_is_offline(offline=False)
