@@ -3,4 +3,4 @@ marshmallow==3.21.2
 paho-mqtt==2.1.0
 pymodbus==3.6.8
 pyyaml==6.0.1
-requests==2.32.2
+requests==2.32.3
