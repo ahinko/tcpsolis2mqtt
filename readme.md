@@ -36,6 +36,7 @@ I've used the [solis2mqtt](https://github.com/incub77/solis2mqtt) repo as an ins
 
 ## Questions & Answers
 ### Why are there so few updates to the repo?
+
 Because it works! If I for some reason would stop using this myself then I will archive this repo. So as long as the repo is in a "non archived" state then I'm using this myself and it works as expected even if there hasn't been any new versions in a while. I will keep dependencies up to date so a new minor/patch version will be available every now and then.
 
 ### Does Solis Cloud still work?
@@ -49,6 +50,10 @@ I have not focused on that since I don't have a need for it. If its possible to 
 ### Will this work with other data loggers, inverters or firmware versions?
 
 I have no idea. I will probably never change to another data logger or upgrade the firmware unless I absolutely have to. If you are able to get this working on another data logger, inverter or firmware version, please let me know and I will add the information to the repo!
+
+### How do I update the firmware of the data logger and inverter?
+
+I send an email to a support address for my country that I found here: https://www.solisinverters.com/se/contactus.html. I asked them to update my inverter and logger. I  included the models and serial number of the inverter and logger. It took less than 24 hours if I remember correctly.
 
 ### Will there be a Home Assistant (HACS) integration?
 
