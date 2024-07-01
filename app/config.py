@@ -18,6 +18,7 @@ class DataLoggerConfig(Schema):
     slave_id = fields.Int(required=False, load_default=1)
     poll_interval = fields.Int(required=False, load_default=60)
     poll_interval_if_off = fields.Int(required=False, load_default=600)
+    poll_retries = fields.Int(required=False, load_default=10)
     http = fields.Nested(HttpConfig(), required=False)
 
 
