@@ -6,6 +6,7 @@ datalogger:
   slave_id: 1
   poll_interval: 60
   poll_interval_if_off: 600
+  poll_retries: 10
   http:
     enabled: True
     user: admin

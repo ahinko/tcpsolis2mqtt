@@ -28,9 +28,11 @@ VERSION = "1.0.3"
 
 class App:
     def __init__(self):
-        self.datalogger_offline = True
+        self.datalogger_offline = False
+        self.datalogger_unreachable = True
         self.init_config()
         self.load_sensors_config()
+        self.retries_done = 0
 
         if self.config["mqtt"]["enabled"]:
             self.mqtt = Mqtt(self.config["mqtt"])
@@ -191,14 +193,32 @@ class App:
                 )
 
     def datalogger_is_offline(self, *, offline: bool):
+        # Check if new state if offline
+        if offline:
+            # Set in unreachable state before offline
+            self.datalogger_unreachable = True
+
+            # Check if retries are done
+            if self.retries_done <= self.config["datalogger"]["poll_retries"]:
+                logging.info(
+                    f"Datalogger not reachable, done {self.retries_done} of {self.config['datalogger']['poll_retries']} retries"
+                )
+                self.retries_done += 1
+                return
+
         # Check if data logger was offline and now came back online
-        if self.datalogger_offline and not offline:
+        if (self.datalogger_offline or self.datalogger_unreachable) and not offline:
             # Came online
             self.query_http()
+            # Reset retry counter
+            self.retries_done = 0
+            # Reset unreachable flag
+            self.datalogger_unreachable = False
 
         self.datalogger_offline = offline
 
         if self.datalogger_offline:
+            logging.info("Datalogger offline")
             # loop over all measurements and set value to 0 and publish to mqtt
             for sensor in self.sensors_config:
                 if not sensor["active"]:
@@ -267,10 +287,6 @@ class App:
                     raise ModbusException("This is the exception you expect to handle")
 
             except ModbusException:
-                # in case we didn't have a exception before
-                logging.info(
-                    f"Datalogger not reachable, retrying in {self.config['datalogger']['poll_interval_if_off']} seconds"
-                )
                 if not self.datalogger_offline:
                     self.datalogger_is_offline(offline=True)
 
@@ -284,6 +300,7 @@ class App:
                     or "modbus" not in sensor
                     or "read_type" not in sensor["modbus"]
                     or self.datalogger_offline
+                    or self.datalogger_unreachable
                 ):
                     continue
 
@@ -397,9 +414,6 @@ class App:
                     logging.error(f"Error occured {e}")
 
                     if str(e) == "Could not read register, might have lost connection":
-                        logging.info(
-                            f"Datalogger no longer reachable, retrying in {self.config['datalogger']['poll_interval_if_off']} seconds"
-                        )
                         if not self.datalogger_offline:
                             self.datalogger_is_offline(offline=True)
 
