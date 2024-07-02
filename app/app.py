@@ -34,6 +34,9 @@ class App:
         self.load_sensors_config()
         self.retries_done = 0
 
+        self.register_span_start = 0
+        self.register_span_end = 0
+
         if self.config["mqtt"]["enabled"]:
             self.mqtt = Mqtt(self.config["mqtt"])
 
@@ -266,32 +269,122 @@ class App:
         else:
             return default_value
 
+    def get_register_interval(self):
+        # Check if we already have a first and last register
+        if self.register_span_start > 0 and self.register_span_end > 0:
+            return
+
+        for sensor in self.sensors_config:
+            # Check if sensor is active and has a modbus read type, also check if the datalogger is online
+            if not sensor["active"] or "modbus" not in sensor:
+                continue
+
+            if (
+                self.register_span_start == 0
+                or sensor["modbus"]["register"] < self.register_span_start
+            ):
+                self.register_span_start = sensor["modbus"]["register"]
+
+            if sensor["modbus"]["register"] > self.register_span_end:
+                additional = 0
+
+                if sensor["modbus"]["read_type"] == "long":
+                    additional = 1
+                elif sensor["modbus"]["read_type"] == "composed_datetime":
+                    additional = 5
+                elif sensor["modbus"]["read_type"] == "alarm":
+                    additional = 3
+
+                self.register_span_end = sensor["modbus"]["register"] + additional
+
+        logging.info(
+            f"First register: {self.register_span_start}, Last register: {self.register_span_end}"
+        )
+
+    def query_modbus(self):
+        logging.info("Querying modbus")
+
+        try:
+            client = ModbusTcpClient(
+                self.config["datalogger"]["host"],
+                port=self.config["datalogger"]["port"],
+                framer=ModbusSocketFramer,
+                timeout=10,
+                retry_on_empty=False,
+                close_comm_on_error=True,
+            )
+
+            if not client.connect():
+                raise ModbusException("This is the exception you expect to handle")
+
+        except ModbusException:
+            if not self.datalogger_offline:
+                self.datalogger_is_offline(offline=True)
+                return
+
+        else:
+            self.datalogger_is_offline(offline=False)
+
+        registers = {}
+        current_register = self.register_span_start
+        chunk_size = self.config["datalogger"]["register_chunks"]
+
+        # Loop while we still have registers to query
+        while current_register < self.register_span_end:
+            try:
+                logging.info(
+                    f"Querying register {current_register} to {current_register + chunk_size}"
+                )
+
+                message = client.read_input_registers(
+                    slave=self.config["datalogger"]["slave_id"],
+                    address=current_register,
+                    count=chunk_size,
+                )
+
+                if message.isError():
+                    raise Exception(
+                        "Could not read register, might have lost connection"
+                    )
+
+                logging.info(f"Result: {message.registers}")
+
+                registry_number = current_register
+                for registry in message.registers:
+                    registers[registry_number] = registry
+                    registry_number += 1
+
+                current_register += chunk_size
+
+            except Exception as e:
+                logging.error(f"Error occured while querying modbus: {e}")
+
+                if str(e) == "Could not read register, might have lost connection":
+                    if not self.datalogger_offline:
+                        self.datalogger_is_offline(offline=True)
+
+            else:
+                self.datalogger_is_offline(offline=False)
+
+        client.close()
+
+        return registers
+
+    def pick_from_registers(self, registers, start, count):
+        return [registers[i] for i in range(start, start + count)]
+
     def main(self):
         # Generate Home assistant MQTT discovery topics
         self.generate_ha_discovery_topics()
 
+        # Get register interval, find lowest and higest register numbers
+        self.get_register_interval()
+
         while True:
             logging.debug("Datalogger scan start at " + datetime.now().isoformat())
 
-            try:
-                client = ModbusTcpClient(
-                    self.config["datalogger"]["host"],
-                    port=self.config["datalogger"]["port"],
-                    framer=ModbusSocketFramer,
-                    timeout=10,
-                    retry_on_empty=False,
-                    close_comm_on_error=True,
-                )
-
-                if not client.connect():
-                    raise ModbusException("This is the exception you expect to handle")
-
-            except ModbusException:
-                if not self.datalogger_offline:
-                    self.datalogger_is_offline(offline=True)
-
-            else:
-                self.datalogger_is_offline(offline=False)
+            ## Query modbus
+            registers = self.query_modbus()
 
             for sensor in self.sensors_config:
                 # Check if sensor is active and has a modbus read type, also check if the datalogger is online
@@ -299,25 +392,28 @@ class App:
                     not sensor["active"]
                     or "modbus" not in sensor
                     or "read_type" not in sensor["modbus"]
-                    or self.datalogger_offline
-                    or self.datalogger_unreachable
+                    or not registers
                 ):
                     continue
 
                 try:
-                    if sensor["modbus"]["read_type"] == "register":
-                        message = client.read_input_registers(
-                            slave=self.config["datalogger"]["slave_id"],
-                            address=sensor["modbus"]["register"],
-                            count=1,
+                    # Verify that we have the register needed
+                    if sensor["modbus"]["register"] not in registers:
+                        raise Exception(
+                            f"Register {sensor["modbus"]["register"]} not found"
                         )
 
-                        if message.isError():
-                            raise Exception(
-                                "Could not read register, might have lost connection"
-                            )
+                    if sensor["modbus"]["read_type"] == "register":
+                        # Get value
+                        values = self.pick_from_registers(
+                            registers,
+                            sensor["modbus"]["register"],
+                            1,
+                        )
 
-                        value = message.registers[0]
+                        value = values[0]
+
+                        # Transform value
                         if "scale" in sensor["modbus"]:
                             value = float(value) * sensor["modbus"]["scale"]
 
@@ -325,19 +421,14 @@ class App:
                                 value = round(value, sensor["modbus"]["decimals"])
 
                     elif sensor["modbus"]["read_type"] == "long":
-                        message = client.read_input_registers(
-                            slave=self.config["datalogger"]["slave_id"],
-                            address=sensor["modbus"]["register"],
-                            count=2,
+                        values = self.pick_from_registers(
+                            registers,
+                            sensor["modbus"]["register"],
+                            2,
                         )
 
-                        if message.isError():
-                            raise Exception(
-                                "Could not read register, might have lost connection"
-                            )
-
                         decoder = BinaryPayloadDecoder.fromRegisters(
-                            message.registers,
+                            values,
                             byteorder=Endian.BIG,
                             wordorder=Endian.BIG,
                         )
@@ -345,51 +436,38 @@ class App:
                         value = str(decoder.decode_32bit_int())
 
                     elif sensor["modbus"]["read_type"] == "composed_datetime":
-                        message = client.read_input_registers(
-                            slave=self.config["datalogger"]["slave_id"],
-                            address=sensor["modbus"]["register"],
-                            count=6,
+                        values = self.pick_from_registers(
+                            registers,
+                            sensor["modbus"]["register"],
+                            6,
                         )
 
-                        if message.isError():
-                            raise Exception(
-                                "Could not read register, might have lost connection"
-                            )
-
-                        value = f"20{message.registers[0]:02d}-{message.registers[1]:02d}-{message.registers[2]:02d}T{message.registers[3]:02d}:{message.registers[4]:02d}:{message.registers[5]:02d}{self.timezone_offset}"
+                        value = f"20{values[0]:02d}-{values[1]:02d}-{values[2]:02d}T{values[3]:02d}:{values[4]:02d}:{values[5]:02d}{self.timezone_offset}"
 
                     elif sensor["modbus"]["read_type"] == "alarm":
-                        message = client.read_input_registers(
-                            slave=self.config["datalogger"]["slave_id"],
-                            address=sensor["modbus"]["register"],
-                            count=4,
+                        values = self.pick_from_registers(
+                            registers,
+                            sensor["modbus"]["register"],
+                            4,
                         )
-
-                        if message.isError():
-                            raise Exception(
-                                "Could not read register, might have lost connection"
-                            )
 
                         value = "OFF"
                         if (
-                            message.registers[0] != 0
-                            or message.registers[1] != 0
-                            or message.registers[2] != 0
-                            or message.registers[3] != 0
+                            values[0] != 0
+                            or values[1] != 0
+                            or values[2] != 0
+                            or values[3] != 0
                         ):
                             value = "ON"
 
                     elif sensor["modbus"]["read_type"] == "bit":
-                        message = client.read_input_registers(
-                            slave=self.config["datalogger"]["slave_id"],
-                            address=sensor["modbus"]["register"],
-                            count=1,
+                        values = self.pick_from_registers(
+                            registers,
+                            sensor["modbus"]["register"],
+                            1,
                         )
 
-                        if message.isError():
-                            raise Exception(
-                                "Could not read register, might have lost connection"
-                            )
+                        value = values[0]
 
                         if (
                             "bit" in sensor["modbus"]
@@ -398,7 +476,7 @@ class App:
                             value = self.map_bit_to_value(
                                 sensor["modbus"]["bit"]["map"],
                                 sensor["modbus"]["bit"]["default_value"],
-                                bin(message.registers[0]),
+                                bin(value),
                             )
                         else:
                             logging.error("Could not find needed modbus.bit.map config")
@@ -413,40 +491,14 @@ class App:
                 except Exception as e:
                     logging.error(f"Error occured {e}")
 
-                    if str(e) == "Could not read register, might have lost connection":
-                        if not self.datalogger_offline:
-                            self.datalogger_is_offline(offline=True)
-
-                        continue
-
-                    if (
-                        "homeassistant" in sensor
-                        and sensor["homeassistant"]["state_class"] == "measurement"
-                    ):
-                        value = 0
-                    elif (
-                        "modbus" in sensor
-                        and "bit" in sensor["modbus"]
-                        and "default_value" in sensor["modbus"]["bit"]
-                    ):
-                        value = sensor["modbus"]["bit"]["default_value"]
-                    else:
-                        logging.error("Error while querying data logger: %s", e)
-                        continue
-
                 else:
-                    self.datalogger_is_offline(offline=False)
-                    logging.info(
-                        f"{sensor['modbus']['register']} {sensor['description']} : {value}"
+                    logging.info("Publishing sensor %s: %s", sensor["name"], value)
+
+                    self.publish(
+                        f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
+                        value,
+                        retain=True,
                     )
-
-                self.publish(
-                    f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
-                    value,
-                    retain=True,
-                )
-
-            client.close()
 
             # wait with next poll configured interval, or if datalogger is not responding ten times the interval
             sleep_duration = (
@@ -454,6 +506,7 @@ class App:
                 if not self.datalogger_offline
                 else self.config["datalogger"]["poll_interval_if_off"]
             )
+
             logging.debug(f"Datalogger scanning paused for {sleep_duration} seconds")
             sleep(sleep_duration)
 

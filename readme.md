@@ -60,7 +60,7 @@ I send an email to a support address for my country that I found here: https://w
 Maybe, I have no plans for it at the moment. My main goal is to get the data into Home Assistant and I decided to use MQTT to simplify the project a little bit.
 
 ## Getting started
-Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`.
+Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`. Most values should be self-explanatory. `register_chunks` is set to 20 by default but during my testing I've been able to query my datalogger for more than 80 registers at the same time.
 
 ### Docker
 `docker run -v "$(pwd)"/config.yaml:/usr/app/src/config.yaml:ro ghcr.io/ahinko/tcpsolis2mqtt:latest`
