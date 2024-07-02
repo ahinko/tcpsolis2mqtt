@@ -7,6 +7,7 @@ datalogger:
   poll_interval: 60
   poll_interval_if_off: 600
   poll_retries: 10
+  register_chunks: 20
   http:
     enabled: True
     user: admin
