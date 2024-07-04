@@ -328,6 +328,7 @@ class App:
         registers = {}
         current_register = self.register_span_start
         chunk_size = self.config["datalogger"]["register_chunks"]
+        queried_registers_counter = 0
 
         # Loop while we still have registers to query
         while current_register < self.register_span_end:
@@ -335,6 +336,7 @@ class App:
                 logging.info(
                     f"Querying register {current_register} to {current_register + chunk_size}"
                 )
+                queried_registers_counter += chunk_size
 
                 message = client.read_input_registers(
                     slave=self.config["datalogger"]["slave_id"],
@@ -367,6 +369,13 @@ class App:
                 self.datalogger_is_offline(offline=False)
 
         client.close()
+
+        # Sometimes we get a response with almost all values being 0, usually also multiple registers
+        # are missing. In that case we just return an empty dictionary. This validation is not perfect
+        # but it should be good enough for now.
+        if len(registers) != queried_registers_counter:
+            logging.info(f"Validation of number of queried registers failed. Queried: {len(registers)}, received: {queried_registers_counter}")
+            return {}
 
         return registers
 
