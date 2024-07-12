@@ -374,7 +374,9 @@ class App:
         # are missing. In that case we just return an empty dictionary. This validation is not perfect
         # but it should be good enough for now.
         if len(registers) != queried_registers_counter:
-            logging.info(f"Validation of number of queried registers failed. Queried: {len(registers)}, received: {queried_registers_counter}")
+            logging.info(
+                f"Validation of number of queried registers failed. Queried: {len(registers)}, received: {queried_registers_counter}"
+            )
             return {}
 
         return registers
