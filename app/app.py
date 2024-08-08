@@ -310,8 +310,6 @@ class App:
                 port=self.config["datalogger"]["port"],
                 framer=ModbusSocketFramer,
                 timeout=10,
-                retry_on_empty=False,
-                close_comm_on_error=True,
             )
 
             if not client.connect():
