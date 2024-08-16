@@ -509,7 +509,7 @@
         7: Backup OV Load
         8: Grid Surge (Warn)
         9: Fan fault(Warn)
-        10: Unknown
+        10: Fan fault(Warn)
         11: AC SPD ERROR(VgSpdFail)
         12: DC SPD ERROR(DcSpdFail)
         13: Unknown
