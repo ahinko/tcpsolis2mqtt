@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 
-import os
 import yaml
 import logging
 import arrow
@@ -13,6 +12,8 @@ from sensors import Sensor
 from time import sleep
 from datetime import datetime
 
+from environs import Env
+
 from mqtt import Mqtt
 from mqtt_discovery import DiscoverMsgSensor, DiscoverMsgBinary
 
@@ -23,7 +24,7 @@ from pymodbus.transaction import ModbusSocketFramer
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadDecoder
 
-VERSION = "1.1.0"
+VERSION = "1.1.2"
 
 
 class App:
@@ -47,15 +48,35 @@ class App:
         self.timezone_offset = arrow.now("local").format("ZZ")
 
     def init_config(self) -> None:
-        config_file = os.environ.get("CONFIG_FILE", "./config.yaml")
+        env = Env()
+        env.read_env()
+
+        # Load config from file
+        config_file = env("CONFIG_FILE", "./config.yaml")
         with open(config_file) as f:
             raw_config = f.read()
 
         config = yaml.load(raw_config, yaml.Loader)
+
+        # Load config from env vars
+        with env.prefixed("MQTT_"):
+            mqtt_user = env("USER", None)
+            mqtt_password = env("PASSWORD", None)
+
+        if mqtt_user is not None:
+            config["mqtt"]["user"] = mqtt_user
+
+        if mqtt_password is not None:
+            config["mqtt"]["password"] = mqtt_password
+
+        # Load config
         self.config = AppConfig().load(config)
 
     def load_sensors_config(self) -> None:
-        sensors_file = os.environ.get("SENSORS_FILE", "./sensors.yaml")
+        env = Env()
+        env.read_env()
+
+        sensors_file = env("SENSORS_FILE", "./sensors.yaml")
 
         with open(sensors_file, "r") as file:
             yaml_data = yaml.safe_load(file)

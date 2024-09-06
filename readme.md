@@ -62,6 +62,9 @@ Maybe, I have no plans for it at the moment. My main goal is to get the data int
 ## Getting started
 Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`. Most values should be self-explanatory. `register_chunks` is set to 20 by default but during my testing I've been able to query my datalogger for more than 80 registers at the same time.
 
+### Environment variables
+It's currently only possible to use environment variables to set MQTT user and password. Use `MQTT_USER` and `MQTT_PASSWORD`.
+
 ### Docker
 `docker run -v "$(pwd)"/config.yaml:/usr/app/src/config.yaml:ro ghcr.io/ahinko/tcpsolis2mqtt:latest`
 
