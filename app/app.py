@@ -20,7 +20,6 @@ from mqtt_discovery import DiscoverMsgSensor, DiscoverMsgBinary
 from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
 from pymodbus.exceptions import ModbusException
-from pymodbus.transaction import ModbusSocketFramer
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadDecoder
 
@@ -329,7 +328,6 @@ class App:
             client = ModbusTcpClient(
                 self.config["datalogger"]["host"],
                 port=self.config["datalogger"]["port"],
-                framer=ModbusSocketFramer,
                 timeout=10,
             )
 
