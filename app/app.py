@@ -328,16 +328,18 @@ class App:
             client = ModbusTcpClient(
                 self.config["datalogger"]["host"],
                 port=self.config["datalogger"]["port"],
+                reconnect_delay=10,
                 timeout=10,
             )
 
             if not client.connect():
-                raise ModbusException("This is the exception you expect to handle")
+                raise ModbusException("Client not connected to datalogger")
 
-        except ModbusException:
+        except ModbusException as e:
+            logging.error(f"Unable to connect to datalogger: {e}")
             if not self.datalogger_offline:
                 self.datalogger_is_offline(offline=True)
-                return
+            return
 
         else:
             self.datalogger_is_offline(offline=False)
@@ -386,6 +388,9 @@ class App:
                 self.datalogger_is_offline(offline=False)
 
         client.close()
+
+        if client.connected:
+            logging.error("Client still connected to datalogger")
 
         # Sometimes we get a response with almost all values being 0, usually also multiple registers
         # are missing. In that case we just return an empty dictionary. This validation is not perfect
