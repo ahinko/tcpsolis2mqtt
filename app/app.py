@@ -332,10 +332,10 @@ class App:
                 timeout=10,
             )
 
-            if not client.connect() or client.isError():
+            if not client.connect():
                 raise ModbusException("Client not connected to datalogger")
 
-        except ModbusException as e:
+        except Exception as e:
             logging.error(f"Unable to connect to datalogger: {e}")
             if not self.datalogger_offline:
                 self.datalogger_is_offline(offline=True)
