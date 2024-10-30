@@ -19,7 +19,7 @@ from mqtt_discovery import DiscoverMsgSensor, DiscoverMsgBinary
 
 from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
-from pymodbus.exceptions import ModbusException, ModbusIOException
+from pymodbus.exceptions import ModbusException
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadDecoder
 
@@ -377,7 +377,7 @@ class App:
 
                 current_register += chunk_size
 
-            except (Exception, ModBusIoException) as e:
+            except (Exception) as e:
                 logging.error(f"Error occured while querying modbus: {e}")
 
                 if str(e) == "Could not read register, might have lost connection":
