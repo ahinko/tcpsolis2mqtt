@@ -377,7 +377,7 @@ class App:
 
                 current_register += chunk_size
 
-            except (Exception) as e:
+            except Exception as e:
                 logging.error(f"Error occured while querying modbus: {e}")
 
                 if str(e) == "Could not read register, might have lost connection":
