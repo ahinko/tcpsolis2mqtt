@@ -6,7 +6,7 @@
   "suppressNotifications": ["prIgnoreNotification"],
   "rebaseWhen": "conflicted",
   "assignees": ["@ahinko"],
-  "semanticCommits": true,
+  "semanticCommits": "enabled",
   "packageRules": [
     {
       "datasources": ["docker", "pypi"],
