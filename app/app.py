@@ -20,8 +20,6 @@ from mqtt_discovery import DiscoverMsgSensor, DiscoverMsgBinary
 from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
 from pymodbus.exceptions import ModbusException
-from pymodbus.constants import Endian
-from pymodbus.payload import BinaryPayloadDecoder
 
 VERSION = "1.1.2"
 
@@ -460,13 +458,10 @@ class App:
                             2,
                         )
 
-                        decoder = BinaryPayloadDecoder.fromRegisters(
+                        value = ModbusTcpClient.convert_from_registers(
                             values,
-                            byteorder=Endian.BIG,
-                            wordorder=Endian.BIG,
+                            data_type=ModbusTcpClient.DATATYPE.INT32,
                         )
-
-                        value = str(decoder.decode_32bit_int())
 
                     elif sensor["modbus"]["read_type"] == "composed_datetime":
                         values = self.pick_from_registers(
