@@ -21,7 +21,7 @@ from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
 from pymodbus.exceptions import ModbusException
 
-VERSION = "1.1.2"
+VERSION = "1.1.4"
 
 
 class App:
