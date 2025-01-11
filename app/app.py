@@ -431,7 +431,7 @@ class App:
                     # Verify that we have the register needed
                     if sensor["modbus"]["register"] not in registers:
                         raise Exception(
-                            f"Register {sensor["modbus"]["register"]} not found"
+                            f"Register {sensor['modbus']['register']} not found"
                         )
 
                     if sensor["modbus"]["read_type"] == "register":
