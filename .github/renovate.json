@@ -3,45 +3,98 @@
   "timezone": "Europe/Stockholm",
   "dependencyDashboard": true,
   "dependencyDashboardTitle": "🤖 Renovate Dashboard",
-  "suppressNotifications": ["prIgnoreNotification"],
+  "suppressNotifications": [
+    "prIgnoreNotification"
+  ],
   "rebaseWhen": "conflicted",
-  "assignees": ["@ahinko"],
+  "assignees": [
+    "@ahinko"
+  ],
   "semanticCommits": "enabled",
   "packageRules": [
     {
-      "datasources": ["docker", "pypi"],
+      "matchDatasources": [
+        "docker",
+        "pypi"
+      ],
       "enabled": true,
-      "updateTypes": ["major", "minor", "patch"]
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch"
+      ]
     },
     {
-      "datasources": ["docker"],
-      "updateTypes": ["major"],
-      "labels": ["renovate/docker", "dependency/major"]
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "renovate/docker",
+        "dependency/major"
+      ]
     },
     {
-      "datasources": ["docker"],
-      "updateTypes": ["minor"],
-      "labels": ["renovate/docker", "dependency/minor"]
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "labels": [
+        "renovate/docker",
+        "dependency/minor"
+      ]
     },
     {
-      "datasources": ["docker"],
-      "updateTypes": ["patch"],
-      "labels": ["renovate/docker", "dependency/patch"]
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "labels": [
+        "renovate/docker",
+        "dependency/patch"
+      ]
     },
     {
-      "datasources": ["pypi"],
-      "updateTypes": ["major"],
-      "labels": ["renovate/pypi", "dependency/major"]
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "renovate/pypi",
+        "dependency/major"
+      ]
     },
     {
-      "datasources": ["pypi"],
-      "updateTypes": ["minor"],
-      "labels": ["renovate/pypi", "dependency/minor"]
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "labels": [
+        "renovate/pypi",
+        "dependency/minor"
+      ]
     },
     {
-      "datasources": ["pypi"],
-      "updateTypes": ["patch"],
-      "labels": ["renovate/pypi", "dependency/patch"]
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "labels": [
+        "renovate/pypi",
+        "dependency/patch"
+      ]
     }
   ]
 }
