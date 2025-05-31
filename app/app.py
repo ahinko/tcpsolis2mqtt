@@ -4,6 +4,7 @@ import yaml
 import logging
 import arrow
 import requests
+import os
 
 from typing import Any
 from config import AppConfig
@@ -381,6 +382,8 @@ class App:
                 if str(e) == "Could not read register, might have lost connection":
                     if not self.datalogger_offline:
                         self.datalogger_is_offline(offline=True)
+                elif str(e) == "[Errno 32] Broken pipe":
+                    os._exit(1)
 
             else:
                 self.datalogger_is_offline(offline=False)
