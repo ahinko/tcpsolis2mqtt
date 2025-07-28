@@ -15,7 +15,7 @@ class HttpConfig(Schema):
 class DataLoggerConfig(Schema):
     host = fields.Str(required=True)
     port = fields.Int(required=False, load_default=502)
-    slave_id = fields.Int(required=False, load_default=1)
+    device_id = fields.Int(required=False, load_default=1)
     poll_interval = fields.Int(required=False, load_default=60)
     poll_interval_if_off = fields.Int(required=False, load_default=600)
     poll_retries = fields.Int(required=False, load_default=10)

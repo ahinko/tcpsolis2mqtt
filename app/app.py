@@ -357,7 +357,7 @@ class App:
                 queried_registers_counter += chunk_size
 
                 message = client.read_input_registers(
-                    slave=self.config["datalogger"]["slave_id"],
+                    device_id=self.config["datalogger"]["device_id"],
                     address=current_register,
                     count=chunk_size,
                 )
