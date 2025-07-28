@@ -71,8 +71,6 @@ It's currently only possible to use environment variables to set MQTT user and p
 ### Docker compose
 ```yaml
 ---
-version: "3.8"
-
 services:
   tcpsolis2mqtt:
     container_name: tcpsolis2mqtt
