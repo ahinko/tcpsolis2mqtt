@@ -40,6 +40,7 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: |
           set -e
+          set -x  # Enable debug output
 
           if [ "$DRY_RUN" = "true" ]; then
             echo "🔍 DRY RUN MODE - No images will be deleted"
@@ -68,11 +69,22 @@ jobs:
           > delete_reasons.txt
           
           # Process each version and determine fate with reason
+          echo "Processing $(wc -l < all_versions.json) versions..."
+          line_count=0
           while IFS= read -r line; do
-            id=$(echo "$line" | jq -r '.id')
-            tags=$(echo "$line" | jq -r '.tags | join(" ")')
-            name=$(echo "$line" | jq -r '.name')
-            created=$(echo "$line" | jq -r '.created_at')
+            line_count=$((line_count + 1))
+            if [ $((line_count % 100)) -eq 0 ]; then
+              echo "Processed $line_count versions..."
+            fi
+            id=$(echo "$line" | jq -r '.id' 2>/dev/null)
+            tags=$(echo "$line" | jq -r '.tags | join(" ")' 2>/dev/null)
+            name=$(echo "$line" | jq -r '.name' 2>/dev/null)
+            created=$(echo "$line" | jq -r '.created_at' 2>/dev/null)
+            
+            if [ -z "$id" ] || [ "$id" = "null" ]; then
+              echo "Warning: Invalid line: $line"
+              continue
+            fi
             
             reason=""
             keep=false
@@ -120,6 +132,10 @@ jobs:
               echo "$id|$reason" >> delete_reasons.txt
             fi
           done < all_versions.json
+          
+          echo "Completed processing $line_count versions"
+          echo "Keep decisions: $(wc -l < keep_reasons.txt)"
+          echo "Delete decisions: $(wc -l < delete_reasons.txt)"
           
           # Now find multi-arch images related to kept versions
           echo "🔗 Finding multi-arch images related to kept versions..."
