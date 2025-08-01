@@ -90,8 +90,8 @@ jobs:
             keep=false
             
             # Check if it's a semver version (has version number tags but not ONLY sha tags)
-            has_version=$(echo "$tags" | grep -o -E '\b[0-9]+(\.[0-9]+)*\b' | head -1)
-            has_sha=$(echo "$tags" | grep -c 'sha-')
+            has_version=$(echo "$tags" | grep -o -E '\b[0-9]+(\.[0-9]+)*\b' | head -1 || true)
+            has_sha=$(echo "$tags" | grep -c 'sha-' || true)
             
             if [ -n "$has_version" ]; then
               if echo "$tags" | grep -q -E '\b[0-9]+\.[0-9]+\.[0-9]+\b'; then
@@ -109,10 +109,10 @@ jobs:
                 sort -r | head -15 > recent_main_sha.tmp
               
               # Check if this ID is in the recent list and get its rank
-              rank=$(grep " $id$" recent_main_sha.tmp | head -1)
+              rank=$(grep " $id$" recent_main_sha.tmp | head -1 || true)
               if [ -n "$rank" ]; then
                 # Get line number (rank)
-                rank_num=$(grep -n " $id$" recent_main_sha.tmp | cut -d: -f1 | head -1)
+                rank_num=$(grep -n " $id$" recent_main_sha.tmp | cut -d: -f1 | head -1 || true)
                 reason="recent-main-SHA-rank-$rank_num-of-15"
                 keep=true
               else
