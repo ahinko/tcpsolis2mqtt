@@ -79,8 +79,8 @@ jobs:
 
           echo "📦 Processing package versions..."
 
-          # Keep all semver versions (anything starting with 'v' followed by digits)
-          jq -r 'select(.tags[]? | test("^v[0-9]+\\.[0-9]+\\.[0-9]+")) | .id' all_versions.json > keep_semver.txt
+          # Keep all semver versions (with or without 'v' prefix)
+          jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | .id' all_versions.json > keep_semver.txt
 
           # Keep main branch SHA versions (keep 15 most recent)
           jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
