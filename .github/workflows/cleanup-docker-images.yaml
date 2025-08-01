@@ -1,0 +1,108 @@
+name: Cleanup Docker Images
+
+on:
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run mode (just show what would be deleted)"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup Docker images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          set -e
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 DRY RUN MODE - No images will be deleted"
+          else
+            echo "🗑️  CLEANUP MODE - Images will be deleted"
+          fi
+
+          echo "🔍 Fetching all package versions..."
+
+          # Get all package versions
+          gh api --paginate "orgs/${{ github.repository_owner }}/packages/container/${{ github.event.repository.name }}/versions" \
+            --jq '.[] | {id: .id, tags: .metadata.container.tags, created_at: .created_at}' > all_versions.json
+
+          echo "📦 Processing package versions..."
+
+          # Keep all semver versions (anything starting with 'v' followed by digits)
+          jq -r 'select(.tags[]? | test("^v[0-9]+\\.[0-9]+\\.[0-9]+")) | .id' all_versions.json > keep_semver.txt
+
+          # Keep main branch SHA versions (keep 15 most recent)
+          jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | {id: .id, created_at: .created_at}' all_versions.json | \
+            sort -k2 -r | head -15 | jq -r '.id' > keep_main_sha.txt
+
+          # Combine all versions to keep
+          cat keep_semver.txt keep_main_sha.txt 2>/dev/null | sort -u > keep_all.txt
+
+          # Get all version IDs and find ones to delete
+          jq -r '.id' all_versions.json | sort > all_ids.txt
+          comm -23 all_ids.txt keep_all.txt > delete_ids.txt
+
+          # Display summary
+          echo "📈 Cleanup Summary:"
+          echo "  Total versions: $(wc -l < all_ids.txt)"
+          echo "  Keeping semver versions: $(wc -l < keep_semver.txt 2>/dev/null || echo 0)"
+          echo "  Keeping main SHA versions: $(wc -l < keep_main_sha.txt 2>/dev/null || echo 0)"
+          echo "  Would delete: $(wc -l < delete_ids.txt)"
+
+          # Show what would be deleted
+          if [ -s delete_ids.txt ]; then
+            echo "🔍 Versions that would be deleted:"
+            while IFS= read -r version_id; do
+              if [ -n "$version_id" ]; then
+                tags=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .tags[]?' all_versions.json | tr '\n' ' ')
+                echo "  ID: $version_id, Tags: $tags"
+              fi
+            done < delete_ids.txt
+
+            # Actually delete if not dry run
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "✅ Dry run completed - no images deleted"
+            else
+              echo "🗑️  Deleting old package versions..."
+              while IFS= read -r version_id; do
+                if [ -n "$version_id" ]; then
+                  echo "Deleting version ID: $version_id"
+                  gh api --method DELETE "orgs/${{ github.repository_owner }}/packages/container/${{ github.event.repository.name }}/versions/$version_id" || echo "Failed to delete $version_id"
+                  sleep 1 # Rate limiting
+                fi
+              done < delete_ids.txt
+              echo "✅ Cleanup completed!"
+            fi
+          else
+            echo "✅ No versions to delete."
+          fi
+
+          # Cleanup temp files
+          rm -f *.txt *.json
