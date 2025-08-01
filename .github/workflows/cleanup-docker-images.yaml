@@ -49,8 +49,9 @@ jobs:
 
           echo "🔍 Fetching all package versions..."
 
-          # Get all package versions
-          gh api --paginate "orgs/${{ github.repository_owner }}/packages/container/${{ github.event.repository.name }}/versions" \
+          # Get all package versions (using user endpoint)
+          PACKAGE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          gh api --paginate "users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME/versions" \
             --jq '.[] | {id: .id, tags: .metadata.container.tags, created_at: .created_at}' > all_versions.json
 
           echo "📦 Processing package versions..."
@@ -94,7 +95,7 @@ jobs:
               while IFS= read -r version_id; do
                 if [ -n "$version_id" ]; then
                   echo "Deleting version ID: $version_id"
-                  gh api --method DELETE "orgs/${{ github.repository_owner }}/packages/container/${{ github.event.repository.name }}/versions/$version_id" || echo "Failed to delete $version_id"
+                  gh api --method DELETE "users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME/versions/$version_id" || echo "Failed to delete $version_id"
                   sleep 1 # Rate limiting
                 fi
               done < delete_ids.txt
