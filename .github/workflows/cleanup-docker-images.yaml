@@ -79,15 +79,35 @@ jobs:
 
           echo "📦 Processing package versions..."
 
-          # Keep all semver versions (with or without 'v' prefix)
-          jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | .id' all_versions.json > keep_semver.txt
-
+          # Keep all semver versions (with or without 'v' prefix) and related multi-arch images
+          jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | "\(.created_at) \(.id)"' all_versions.json > semver_with_dates.txt
+          
           # Keep main branch SHA versions (keep 15 most recent)
           jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
-            sort -r | head -15 | cut -d' ' -f2 > keep_main_sha.txt
-
-          # Combine all versions to keep
-          cat keep_semver.txt keep_main_sha.txt 2>/dev/null | sort -u > keep_all.txt
+            sort -r | head -15 > main_sha_with_dates.txt
+          
+          # For each semver and main SHA version, also keep any versions created within 5 minutes (same build)
+          > keep_all_related.txt
+          
+          while IFS=' ' read -r created_at version_id; do
+            if [ -n "$created_at" ] && [ -n "$version_id" ]; then
+              echo "$version_id" >> keep_all_related.txt
+              # Find other versions created within 5 minutes of this one
+              jq -r --arg target_time "$created_at" '
+                select(
+                  ((.created_at | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 
+                   ($target_time | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime)) | 
+                  fabs <= 300
+                ) | .id' all_versions.json >> keep_all_related.txt
+            fi
+          done < <(cat semver_with_dates.txt main_sha_with_dates.txt)
+          
+          # Remove duplicates and create final keep list
+          sort -u keep_all_related.txt > keep_all.txt
+          
+          # Update summary to reflect new logic
+          semver_count=$(wc -l < semver_with_dates.txt 2>/dev/null || echo 0)
+          main_sha_count=$(wc -l < main_sha_with_dates.txt 2>/dev/null || echo 0)
 
           # Get all version IDs and find ones to delete
           jq -r '.id' all_versions.json | sort > all_ids.txt
@@ -96,8 +116,9 @@ jobs:
           # Display summary
           echo "📈 Cleanup Summary:"
           echo "  Total versions: $(wc -l < all_ids.txt)"
-          echo "  Keeping semver versions: $(wc -l < keep_semver.txt 2>/dev/null || echo 0)"
-          echo "  Keeping main SHA versions: $(wc -l < keep_main_sha.txt 2>/dev/null || echo 0)"
+          echo "  Keeping semver versions (+ related): $semver_count"
+          echo "  Keeping main SHA versions (+ related): $main_sha_count"
+          echo "  Total keeping (including multi-arch): $(wc -l < keep_all.txt)"
           echo "  Would delete: $(wc -l < delete_ids.txt)"
 
           # Show what would be deleted
