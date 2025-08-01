@@ -151,11 +151,11 @@ jobs:
             exit 1
           fi
           
-          # Create final keep list (just IDs)
-          cut -d' ' -f1 keep_with_manifests.txt | sort -nu > keep_all.txt
+          # Create final keep list (just IDs) - ensure proper numeric sorting
+          cut -d' ' -f1 keep_with_manifests.txt | sort -n | uniq > keep_all.txt
 
-          # Get all version IDs and find ones to delete
-          jq -r '.id' all_versions.json | sort > all_ids.txt
+          # Get all version IDs and find ones to delete - ensure proper numeric sorting  
+          jq -r '.id' all_versions.json | sort -n > all_ids.txt
           comm -23 all_ids.txt keep_all.txt > delete_ids.txt
 
           # Display summary with detailed reasons
