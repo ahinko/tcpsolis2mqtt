@@ -68,13 +68,7 @@ jobs:
           > delete_reasons.txt
 
           # Process each version and determine fate with reason
-          echo "Processing $(wc -l < all_versions.json) versions..."
-          line_count=0
           while IFS= read -r line; do
-            line_count=$((line_count + 1))
-            if [ $((line_count % 100)) -eq 0 ]; then
-              echo "Processed $line_count versions..."
-            fi
             id=$(echo "$line" | jq -r '.id' 2>/dev/null)
             tags=$(echo "$line" | jq -r '.tags | join(" ")' 2>/dev/null)
             name=$(echo "$line" | jq -r '.name' 2>/dev/null)
@@ -133,24 +127,8 @@ jobs:
             fi
           done < all_versions.json
 
-          echo "Completed processing $line_count versions"
-          echo "Keep decisions: $(wc -l < keep_reasons.txt)"
-          echo "Delete decisions: $(wc -l < delete_reasons.txt)"
-
           # Now find multi-arch images related to kept versions
           echo "🔗 Finding multi-arch images related to kept versions..."
-
-          # Debug: show what we initially decided to keep
-          echo "Debug: Initial keep decisions:"
-          total_keep=$(wc -l < keep_reasons.txt)
-          semver_keep=$(grep "semver-version" keep_reasons.txt | wc -l)
-          mainsha_keep=$(grep "recent-main-SHA" keep_reasons.txt | wc -l)
-          echo "Total initial keep decisions: $total_keep"
-          echo "Semver versions: $semver_keep"
-          echo "Main/SHA versions: $mainsha_keep"
-
-          echo "Main/SHA versions being kept:"
-          grep "recent-main-SHA" keep_reasons.txt || echo "No main/SHA versions found"
 
           > keep_with_manifests.txt
 
@@ -196,17 +174,7 @@ jobs:
           # Get all version IDs and find ones to delete - ensure proper numeric sorting
           jq -r '.id' all_versions.json | grep -E '^[0-9]+$' | sort -n > all_ids.txt
 
-          # Debug: check if files are properly sorted
-          echo "Debug: First 5 lines of all_ids.txt:"
-          head -5 all_ids.txt
-          echo "Debug: First 5 lines of keep_all.txt:"
-          head -5 keep_all.txt
-          echo "Debug: Last 5 lines of all_ids.txt:"
-          tail -5 all_ids.txt
-          echo "Debug: Last 5 lines of keep_all.txt:"
-          tail -5 keep_all.txt
-
-          # Use a safer approach - create delete list manually
+          # Create delete list manually
           > delete_ids.txt
           while IFS= read -r id; do
             if ! grep -q "^$id$" keep_all.txt; then
