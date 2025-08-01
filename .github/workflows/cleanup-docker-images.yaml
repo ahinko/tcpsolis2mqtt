@@ -89,8 +89,9 @@ jobs:
             keep=false
 
             # Check if it's a semver version (has version number tags but not ONLY sha tags)
-            has_version=$(echo "$tags" | grep -o -E '\b[0-9]+(\.[0-9]+)*\b' | head -1 || true)
-            has_sha=$(echo "$tags" | grep -c 'sha-' || true)
+            # Remove sha- tags first, then look for version numbers
+            tags_no_sha=$(echo "$tags" | sed 's/sha-[a-f0-9]*//g')
+            has_version=$(echo "$tags_no_sha" | grep -o -E '\b[0-9]+(\.[0-9]+)*\b' | head -1 || true)
 
             if [ -n "$has_version" ]; then
               if echo "$tags" | grep -q -E '\b[0-9]+\.[0-9]+\.[0-9]+\b'; then
@@ -142,14 +143,14 @@ jobs:
           # Debug: show what we initially decided to keep
           echo "Debug: Initial keep decisions:"
           total_keep=$(wc -l < keep_reasons.txt)
-          semver_keep=$(grep "semver version" keep_reasons.txt | wc -l)
-          mainsha_keep=$(grep "recent main/SHA" keep_reasons.txt | wc -l)
+          semver_keep=$(grep "semver-version" keep_reasons.txt | wc -l)
+          mainsha_keep=$(grep "recent-main-SHA" keep_reasons.txt | wc -l)
           echo "Total initial keep decisions: $total_keep"
           echo "Semver versions: $semver_keep"
           echo "Main/SHA versions: $mainsha_keep"
 
           echo "Main/SHA versions being kept:"
-          grep "recent main/SHA" keep_reasons.txt || echo "No main/SHA versions found"
+          grep "recent-main-SHA" keep_reasons.txt || echo "No main/SHA versions found"
 
           > keep_with_manifests.txt
 
@@ -214,8 +215,8 @@ jobs:
           done < all_ids.txt
 
           # Display summary with detailed reasons
-          semver_count=$(grep "semver version" keep_with_manifests.txt | wc -l)
-          main_sha_count=$(grep "recent main/SHA" keep_with_manifests.txt | wc -l)
+          semver_count=$(grep "semver-version" keep_with_manifests.txt | wc -l)
+          main_sha_count=$(grep "recent-main-SHA" keep_with_manifests.txt | wc -l)
 
           echo "📈 Cleanup Summary:"
           echo "  Total versions: $(wc -l < all_ids.txt)"
