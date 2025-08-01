@@ -75,7 +75,15 @@ jobs:
           fi
           
           # Process the versions
+          echo "Raw versions file size: $(wc -c < raw_versions.json)"
+          echo "First few lines of raw_versions.json:"
+          head -3 raw_versions.json || echo "File is empty or unreadable"
+          
           jq '.[] | {id: .id, tags: .metadata.container.tags, created_at: .created_at}' raw_versions.json > all_versions.json
+          
+          echo "Processed versions file size: $(wc -c < all_versions.json)"
+          echo "First few lines of all_versions.json:"
+          head -3 all_versions.json || echo "File is empty or unreadable"
 
           echo "📦 Processing package versions..."
 
