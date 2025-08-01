@@ -147,9 +147,19 @@ jobs:
                   -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" 2>/dev/null); then
 
                   echo "  Manifest response received, parsing..."
+                  
+                  # Show what digests we got from the manifest
+                  digests=$(echo "$manifest_info" | jq -r '.manifests[]?.digest // empty' 2>/dev/null)
+                  echo "  Digests from manifest: $digests"
+                  
+                  # Show some example names from our versions to compare
+                  echo "  Sample version names around this ID:"
+                  jq -r --arg id "$version_id" 'select(.id >= (($id | tonumber) - 10) and .id <= (($id | tonumber) + 10)) | "    \(.id): \(.name)"' all_versions.json | head -5
+                  
                   # Extract referenced digests and find their version IDs
                   echo "$manifest_info" | jq -r '.manifests[]?.digest // empty' 2>/dev/null | while read -r digest; do
                     if [ -n "$digest" ]; then
+                      echo "    Looking for digest: $digest"
                       related_id=$(jq -r --arg sha "$digest" 'select(.name == $sha) | .id' all_versions.json)
                       if [ -n "$related_id" ] && [ "$related_id" != "$version_id" ]; then
                         echo "    Found related image: $related_id (digest: $digest)"
@@ -157,6 +167,8 @@ jobs:
                         # Remove from delete list if it was there
                         grep -v "^$related_id|" delete_reasons.txt > delete_reasons_temp.txt 2>/dev/null || touch delete_reasons_temp.txt
                         mv delete_reasons_temp.txt delete_reasons.txt
+                      else
+                        echo "    No matching version found for digest: $digest"
                       fi
                     fi
                   done
