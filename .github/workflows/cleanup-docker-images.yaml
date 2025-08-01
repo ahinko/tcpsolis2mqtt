@@ -77,29 +77,31 @@ jobs:
             reason=""
             keep=false
             
-            # Check if it's a semver version (including major/minor variants)
-            # Must NOT match sha- patterns, and must be pure version numbers
-            if echo "$tags" | grep -q -E '\b(v?[0-9]+\.[0-9]+\.[0-9]+|v?[0-9]+\.[0-9]+|v?[0-9]+)\b' && ! echo "$tags" | grep -q 'sha-'; then
-              # Identify which type of semver tag this is
-              if echo "$tags" | grep -q -E '\bv?[0-9]+\.[0-9]+\.[0-9]+\b'; then
+            # Check if it's a semver version (has version number tags but not ONLY sha tags)
+            has_version=$(echo "$tags" | grep -o -E '\b[0-9]+(\.[0-9]+)*\b' | head -1)
+            has_sha=$(echo "$tags" | grep -c 'sha-')
+            
+            if [ -n "$has_version" ]; then
+              if echo "$tags" | grep -q -E '\b[0-9]+\.[0-9]+\.[0-9]+\b'; then
                 reason="semver-version-full"
-              elif echo "$tags" | grep -q -E '\bv?[0-9]+\.[0-9]+\b'; then
+              elif echo "$tags" | grep -q -E '\b[0-9]+\.[0-9]+\b'; then
                 reason="semver-version-major-minor"
-              elif echo "$tags" | grep -q -E '\bv?[0-9]+\b'; then
+              elif echo "$tags" | grep -q -E '\b[0-9]+\b'; then
                 reason="semver-version-major"
               fi
               keep=true
             # Check if it's in the 15 most recent main/SHA versions
             elif echo "$tags" | grep -q -E '\b(main|sha-[a-f0-9]{7})\b'; then
-              # Get the 15 most recent main/SHA IDs
-              recent_ids=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
-                sort -r | head -15 | cut -d' ' -f2)
+              # Create temp file with timestamped main/SHA versions
+              jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
+                sort -r | head -15 > recent_main_sha.tmp
               
-              # Check if this ID is in the recent list
-              if echo "$recent_ids" | grep -q "^$id$"; then
-                rank=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
-                  sort -r | head -15 | nl -nln | grep " $id$" | cut -f1)
-                reason="recent-main-SHA-rank-$rank-of-15"
+              # Check if this ID is in the recent list and get its rank
+              rank=$(grep " $id$" recent_main_sha.tmp | head -1)
+              if [ -n "$rank" ]; then
+                # Get line number (rank)
+                rank_num=$(grep -n " $id$" recent_main_sha.tmp | cut -d: -f1 | head -1)
+                reason="recent-main-SHA-rank-$rank_num-of-15"
                 keep=true
               else
                 reason="old-main-SHA-older-than-15-most-recent"
