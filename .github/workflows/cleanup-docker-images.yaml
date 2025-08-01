@@ -49,119 +49,146 @@ jobs:
 
           echo "🔍 Fetching all package versions..."
 
-          # Get all package versions (using user endpoint)
+          # Get package name
           PACKAGE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
-          echo "Looking for package: $PACKAGE_NAME"
-          echo "Owner: ${{ github.repository_owner }}"
-          
-          # First check if we can access the package
-          if ! gh api "users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME" > /dev/null 2>&1; then
-            echo "❌ Cannot access package. Available packages:"
-            gh api "users/${{ github.repository_owner }}/packages?package_type=container" --jq '.[].name' || echo "No packages found"
-            exit 1
-          fi
-          
+
           # Get all package versions
           if ! gh api --paginate "users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME/versions" > raw_versions.json; then
             echo "❌ Failed to fetch package versions"
             exit 1
           fi
-          
-          # Check if we got valid JSON
-          if ! jq empty raw_versions.json 2>/dev/null; then
-            echo "❌ Invalid JSON response:"
-            cat raw_versions.json
-            exit 1
-          fi
-          
-          # Process the versions - get more detailed info to understand relationships
-          jq -c '.[] | {id: .id, name: .name, tags: .metadata.container.tags, created_at: .created_at, updated_at: .updated_at}' raw_versions.json > all_versions.json
-          
-          # Let's examine the structure to understand relationships
-          echo "🔍 Analyzing image relationships..."
-          echo "Sample of different image types:"
-          
-          # Show tagged vs untagged examples
-          echo "Tagged images (sample):"
-          jq -r 'select(.tags | length > 0) | "ID: \(.id), Name: \(.name), Tags: \(.tags | join(" ")), Created: \(.created_at)"' all_versions.json | head -3
-          
-          echo -e "\nUntagged images (sample):"  
-          jq -r 'select(.tags | length == 0) | "ID: \(.id), Name: \(.name), Created: \(.created_at)"' all_versions.json | head -3
-          
-          
+
+          # Process the versions
+          jq -c '.[] | {id: .id, name: .name, tags: .metadata.container.tags, created_at: .created_at}' raw_versions.json > all_versions.json
 
           echo "📦 Processing package versions..."
 
-          # MANIFEST-BASED APPROACH: Use Docker Registry API to find related images
-          echo "🔗 Using Docker Registry API to find manifest relationships..."
+          # Create detailed keep/delete lists with reasons
+          > keep_reasons.txt
+          > delete_reasons.txt
           
-          # Get tagged versions we want to keep
-          jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | "\(.id) \(.name)"' all_versions.json > keeper_semver.txt
-          jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id) \(.name)"' all_versions.json | \
-            sort -r | head -15 | cut -d' ' -f2,3 > keeper_main_sha.txt
+          # Process each version and determine fate with reason
+          while IFS= read -r line; do
+            id=$(echo "$line" | jq -r '.id')
+            tags=$(echo "$line" | jq -r '.tags | join(" ")')
+            name=$(echo "$line" | jq -r '.name')
+            created=$(echo "$line" | jq -r '.created_at')
+            
+            reason=""
+            keep=false
+            
+            # Check if it's a semver version
+            if echo "$tags" | grep -q -E '\bv?[0-9]+\.[0-9]+\.[0-9]+\b'; then
+              reason="semver version"
+              keep=true
+            # Check if it's in the 15 most recent main/SHA versions
+            elif echo "$tags" | grep -q -E '\b(main|sha-[a-f0-9]{7})\b'; then
+              # Check if it's in the top 15 by date
+              rank=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
+                sort -r | nl -nw1 | grep " $id$" | cut -d' ' -f1)
+              if [ -n "$rank" ] && [ "$rank" -le 15 ]; then
+                reason="recent main/SHA (#$rank of 15)"
+                keep=true
+              else
+                reason="old main/SHA (older than 15 most recent)"
+              fi
+            # Check if it has no tags (untagged multi-arch image)
+            elif [ -z "$tags" ] || [ "$tags" = " " ]; then
+              reason="untagged (likely multi-arch artifact)"
+            # Has other tags (branch, etc.)
+            else
+              reason="branch/other tags: $tags"
+            fi
+            
+            if [ "$keep" = true ]; then
+              echo "$id $reason" >> keep_reasons.txt
+            else
+              echo "$id $reason" >> delete_reasons.txt
+            fi
+          done < all_versions.json
           
-          # For each keeper manifest, get its architecture-specific images
+          # Now find multi-arch images related to kept versions
+          echo "🔗 Finding multi-arch images related to kept versions..."
           > keep_with_manifests.txt
           
-          while IFS=' ' read -r version_id manifest_sha; do
-            if [ -n "$version_id" ] && [ -n "$manifest_sha" ]; then
-              echo "$version_id" >> keep_with_manifests.txt
+          while IFS=' ' read -r version_id reason; do
+            if [ -n "$version_id" ]; then
+              echo "$version_id $reason" >> keep_with_manifests.txt
               
-              # Get the manifest from Docker registry to see what it references
-              echo "Checking manifest for version $version_id ($manifest_sha)..."
+              # Get the manifest SHA for this version
+              manifest_sha=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .name' all_versions.json)
               
-              # Try to get manifest - this will show us referenced image SHAs
-              if manifest_info=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-                "https://ghcr.io/v2/ahinko/tcpsolis2mqtt/manifests/${manifest_sha#sha256:}" \
-                -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" 2>/dev/null); then
-                
-                # Extract referenced digests and find their version IDs
-                echo "$manifest_info" | jq -r '.manifests[]?.digest // empty' 2>/dev/null | while read -r digest; do
-                  if [ -n "$digest" ]; then
-                    # Find version ID for this digest
-                    jq -r --arg sha "$digest" 'select(.name == $sha) | .id' all_versions.json >> keep_with_manifests.txt
-                  fi
-                done
+              if [ -n "$manifest_sha" ]; then
+                # Get manifest from Docker registry
+                if manifest_info=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                  "https://ghcr.io/v2/${{ github.repository_owner }}/$PACKAGE_NAME/manifests/${manifest_sha#sha256:}" \
+                  -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" 2>/dev/null); then
+                  
+                  # Extract referenced digests and find their version IDs
+                  echo "$manifest_info" | jq -r '.manifests[]?.digest // empty' 2>/dev/null | while read -r digest; do
+                    if [ -n "$digest" ]; then
+                      related_id=$(jq -r --arg sha "$digest" 'select(.name == $sha) | .id' all_versions.json)
+                      if [ -n "$related_id" ] && [ "$related_id" != "$version_id" ]; then
+                        echo "$related_id multi-arch component of $version_id ($reason)" >> keep_with_manifests.txt
+                        # Remove from delete list if it was there
+                        grep -v "^$related_id " delete_reasons.txt > delete_reasons_temp.txt 2>/dev/null || touch delete_reasons_temp.txt
+                        mv delete_reasons_temp.txt delete_reasons.txt
+                      fi
+                    fi
+                  done
+                fi
               fi
             fi
-          done < <(cat keeper_semver.txt keeper_main_sha.txt)
+          done < keep_reasons.txt
           
-          # Verify we got manifest data - fail if Docker Registry API doesn't work
+          # Verify we have data - fail if API doesn't work
           if [ ! -s keep_with_manifests.txt ]; then
-            echo "❌ Docker Registry API failed - cannot determine manifest relationships"
-            echo "❌ Aborting cleanup to prevent accidental deletion of related images"
+            echo "❌ Cannot determine manifest relationships - aborting cleanup"
             exit 1
           fi
           
-          # Remove duplicates and sort
-          sort -nu keep_with_manifests.txt > keep_all.txt
-          
-          # Count for summary
-          semver_count=$(wc -l < keeper_semver.txt 2>/dev/null || echo 0)
-          main_sha_count=$(wc -l < keeper_main_sha.txt 2>/dev/null || echo 0)
+          # Create final keep list (just IDs)
+          cut -d' ' -f1 keep_with_manifests.txt | sort -nu > keep_all.txt
 
           # Get all version IDs and find ones to delete
           jq -r '.id' all_versions.json | sort > all_ids.txt
           comm -23 all_ids.txt keep_all.txt > delete_ids.txt
 
-          # Display summary
-          echo "📈 Cleanup Summary (PRECISE GROUPING):"
-          echo "  Total versions: $(wc -l < all_ids.txt)"
-          echo "  Semver versions (tagged): $semver_count"
-          echo "  Main/SHA versions (15 most recent): $main_sha_count"
-          echo "  Total keeping (including same-second multi-arch): $(wc -l < keep_all.txt)"
-          echo "  Would delete: $(wc -l < delete_ids.txt)"
-          echo "  🔗 Groups images by exact creation timestamp (same build = keep together)"
+          # Display summary with detailed reasons
+          semver_count=$(grep "semver version" keep_with_manifests.txt | wc -l)
+          main_sha_count=$(grep "recent main/SHA" keep_with_manifests.txt | wc -l)
 
-          # Show what would be deleted
-          if [ -s delete_ids.txt ]; then
-            echo "🔍 Versions that would be deleted:"
-            while IFS= read -r version_id; do
+          echo "📈 Cleanup Summary:"
+          echo "  Total versions: $(wc -l < all_ids.txt)"
+          echo "  Semver versions: $semver_count"
+          echo "  Main/SHA versions (15 most recent): $main_sha_count"
+          echo "  Total keeping (including multi-arch): $(wc -l < keep_all.txt)"
+          echo "  Would delete: $(wc -l < delete_ids.txt)"
+
+          # Show what we're keeping and why
+          echo ""
+          echo "✅ Versions being kept:"
+          while IFS=' ' read -r version_id reason_part; do
+            if [ -n "$version_id" ]; then
+              # Reconstruct the full reason (everything after the first space)
+              reason=$(echo "$version_id $reason_part" | cut -d' ' -f2-)
+              tags=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .tags | join(" ")' all_versions.json)
+              echo "  ID: $version_id, Tags: $tags, Reason: $reason"
+            fi
+          done < keep_with_manifests.txt
+
+          # Show what would be deleted and why
+          echo ""
+          if [ -s delete_reasons.txt ]; then
+            echo "🗑️  Versions that would be deleted:"
+            while IFS=' ' read -r version_id reason_part; do
               if [ -n "$version_id" ]; then
-                tags=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .tags[]?' all_versions.json | tr '\n' ' ')
-                echo "  ID: $version_id, Tags: $tags"
+                # Reconstruct the full reason (everything after the first space)
+                reason=$(echo "$version_id $reason_part" | cut -d' ' -f2-)
+                tags=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .tags | join(" ")' all_versions.json)
+                echo "  ID: $version_id, Tags: $tags, Reason: $reason"
               fi
-            done < delete_ids.txt
+            done < delete_reasons.txt
 
             # Actually delete if not dry run
             if [ "$DRY_RUN" = "true" ]; then
