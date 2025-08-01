@@ -88,39 +88,67 @@ jobs:
           echo -e "\nUntagged images (sample):"  
           jq -r 'select(.tags | length == 0) | "ID: \(.id), Name: \(.name), Created: \(.created_at)"' all_versions.json | head -3
           
-          # Check if there are patterns in the SHA names that indicate relationships
-          echo -e "\nChecking for manifest relationships..."
-          jq -r 'select(.tags | length > 0) | .name' all_versions.json | head -5
+          # VERIFICATION: Let's prove the timestamp relationship theory
+          echo -e "\nTESTING TIMESTAMP GROUPING THEORY:"
+          echo "Looking at the most recent tagged image and what was created at the same time..."
+          
+          # Get the most recent tagged image
+          latest_tagged=$(jq -r 'select(.tags | length > 0) | "\(.created_at) \(.id) \(.tags | join(","))"' all_versions.json | sort -r | head -1)
+          echo "Latest tagged: $latest_tagged"
+          
+          # Extract its timestamp
+          latest_timestamp=$(echo "$latest_tagged" | cut -d' ' -f1)
+          echo "Its timestamp: $latest_timestamp"
+          
+          # Find ALL images with that exact timestamp
+          echo "ALL images created at exactly $latest_timestamp:"
+          jq -r --arg ts "$latest_timestamp" 'select(.created_at == $ts) | "  ID: \(.id), Tags: \(.tags | join(" ") // "NONE"), Name: \(.name)"' all_versions.json
+          
+          # Count them
+          same_time_count=$(jq -r --arg ts "$latest_timestamp" 'select(.created_at == $ts) | .id' all_versions.json | wc -l)
+          echo "Total images at this exact timestamp: $same_time_count"
+          
+          echo -e "\nThis will help us verify if same-timestamp = same-build"
 
           echo "📦 Processing package versions..."
 
-          # BULLETPROOF APPROACH: Only delete versions that have NO tags at all
-          # This is 100% safe - we never delete anything with any tag
+          # PRECISE APPROACH: Group by exact timestamp (same second = same build)
+          echo "🔗 Grouping images by build time..."
           
-          # Keep EVERYTHING that has any tag (semver, SHA, main, anything)
-          jq -r 'select(.tags | length > 0) | .id' all_versions.json > keep_all_tagged.txt
+          # Get all tagged versions we want to keep (semver + 15 most recent main/SHA)
+          jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | "\(.created_at) \(.id)"' all_versions.json > semver_timestamps.txt
+          jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
+            sort -r | head -15 > main_sha_timestamps.txt
           
-          # Only delete versions with completely empty tags
-          jq -r 'select(.tags | length == 0) | .id' all_versions.json > delete_untagged_only.txt
+          # For each keeper version, find ALL versions with the same creation time (to the second)
+          > keep_with_related.txt
           
-          # For summary - count what we're keeping
-          semver_count=$(jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | .id' all_versions.json | wc -l)
-          main_sha_count=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | .id' all_versions.json | wc -l)
+          while IFS=' ' read -r timestamp version_id; do
+            if [ -n "$timestamp" ] && [ -n "$version_id" ]; then
+              # Find all versions created in the same second (same multi-arch build)
+              jq -r --arg ts "$timestamp" 'select(.created_at == $ts) | .id' all_versions.json >> keep_with_related.txt
+            fi
+          done < <(cat semver_timestamps.txt main_sha_timestamps.txt)
           
-          # Use the tagged versions as our keep list
-          cp keep_all_tagged.txt keep_all.txt
+          # Remove duplicates and sort
+          sort -u keep_with_related.txt > keep_all.txt
+          
+          # Count for summary
+          semver_count=$(wc -l < semver_timestamps.txt 2>/dev/null || echo 0)
+          main_sha_count=$(wc -l < main_sha_timestamps.txt 2>/dev/null || echo 0)
 
           # Get all version IDs and find ones to delete
           jq -r '.id' all_versions.json | sort > all_ids.txt
           comm -23 all_ids.txt keep_all.txt > delete_ids.txt
 
           # Display summary
-          echo "📈 Cleanup Summary:"
+          echo "📈 Cleanup Summary (PRECISE GROUPING):"
           echo "  Total versions: $(wc -l < all_ids.txt)"
-          echo "  Keeping semver versions (+ related): $semver_count"
-          echo "  Keeping main SHA versions (+ related): $main_sha_count"
-          echo "  Total keeping (including multi-arch): $(wc -l < keep_all.txt)"
+          echo "  Semver versions (tagged): $semver_count"
+          echo "  Main/SHA versions (15 most recent): $main_sha_count"
+          echo "  Total keeping (including same-second multi-arch): $(wc -l < keep_all.txt)"
           echo "  Would delete: $(wc -l < delete_ids.txt)"
+          echo "  🔗 Groups images by exact creation timestamp (same build = keep together)"
 
           # Show what would be deleted
           if [ -s delete_ids.txt ]; then
