@@ -151,12 +151,29 @@ jobs:
             exit 1
           fi
           
-          # Create final keep list (just IDs) - ensure proper numeric sorting
-          cut -d' ' -f1 keep_with_manifests.txt | sort -n | uniq > keep_all.txt
+          # Create final keep list (just IDs) - ensure proper numeric sorting and remove empty lines
+          cut -d' ' -f1 keep_with_manifests.txt | grep -E '^[0-9]+$' | sort -n | uniq > keep_all.txt
 
           # Get all version IDs and find ones to delete - ensure proper numeric sorting  
-          jq -r '.id' all_versions.json | sort -n > all_ids.txt
-          comm -23 all_ids.txt keep_all.txt > delete_ids.txt
+          jq -r '.id' all_versions.json | grep -E '^[0-9]+$' | sort -n > all_ids.txt
+          
+          # Debug: check if files are properly sorted
+          echo "Debug: First 5 lines of all_ids.txt:"
+          head -5 all_ids.txt
+          echo "Debug: First 5 lines of keep_all.txt:"
+          head -5 keep_all.txt
+          echo "Debug: Last 5 lines of all_ids.txt:"
+          tail -5 all_ids.txt
+          echo "Debug: Last 5 lines of keep_all.txt:"
+          tail -5 keep_all.txt
+          
+          # Use a safer approach - create delete list manually
+          > delete_ids.txt
+          while IFS= read -r id; do
+            if ! grep -q "^$id$" keep_all.txt; then
+              echo "$id" >> delete_ids.txt
+            fi
+          done < all_ids.txt
 
           # Display summary with detailed reasons
           semver_count=$(grep "semver version" keep_with_manifests.txt | wc -l)
