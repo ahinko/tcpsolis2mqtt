@@ -51,8 +51,31 @@ jobs:
 
           # Get all package versions (using user endpoint)
           PACKAGE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
-          gh api --paginate "users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME/versions" \
-            --jq '.[] | {id: .id, tags: .metadata.container.tags, created_at: .created_at}' > all_versions.json
+          echo "Looking for package: $PACKAGE_NAME"
+          echo "Owner: ${{ github.repository_owner }}"
+          
+          # First check if we can access the package
+          if ! gh api "users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME" > /dev/null 2>&1; then
+            echo "❌ Cannot access package. Available packages:"
+            gh api "users/${{ github.repository_owner }}/packages?package_type=container" --jq '.[].name' || echo "No packages found"
+            exit 1
+          fi
+          
+          # Get all package versions
+          if ! gh api --paginate "users/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME/versions" > raw_versions.json; then
+            echo "❌ Failed to fetch package versions"
+            exit 1
+          fi
+          
+          # Check if we got valid JSON
+          if ! jq empty raw_versions.json 2>/dev/null; then
+            echo "❌ Invalid JSON response:"
+            cat raw_versions.json
+            exit 1
+          fi
+          
+          # Process the versions
+          jq '.[] | {id: .id, tags: .metadata.container.tags, created_at: .created_at}' raw_versions.json > all_versions.json
 
           echo "📦 Processing package versions..."
 
