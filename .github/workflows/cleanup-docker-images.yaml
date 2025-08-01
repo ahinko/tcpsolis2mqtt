@@ -88,54 +88,57 @@ jobs:
           echo -e "\nUntagged images (sample):"  
           jq -r 'select(.tags | length == 0) | "ID: \(.id), Name: \(.name), Created: \(.created_at)"' all_versions.json | head -3
           
-          # VERIFICATION: Let's prove the timestamp relationship theory
-          echo -e "\nTESTING TIMESTAMP GROUPING THEORY:"
-          echo "Looking at the most recent tagged image and what was created at the same time..."
           
-          # Get the most recent tagged image
-          latest_tagged=$(jq -r 'select(.tags | length > 0) | "\(.created_at) \(.id) \(.tags | join(","))"' all_versions.json | sort -r | head -1)
-          echo "Latest tagged: $latest_tagged"
-          
-          # Extract its timestamp
-          latest_timestamp=$(echo "$latest_tagged" | cut -d' ' -f1)
-          echo "Its timestamp: $latest_timestamp"
-          
-          # Find ALL images with that exact timestamp
-          echo "ALL images created at exactly $latest_timestamp:"
-          jq -r --arg ts "$latest_timestamp" 'select(.created_at == $ts) | "  ID: \(.id), Tags: \(.tags | join(" ") // "NONE"), Name: \(.name)"' all_versions.json
-          
-          # Count them
-          same_time_count=$(jq -r --arg ts "$latest_timestamp" 'select(.created_at == $ts) | .id' all_versions.json | wc -l)
-          echo "Total images at this exact timestamp: $same_time_count"
-          
-          echo -e "\nThis will help us verify if same-timestamp = same-build"
 
           echo "📦 Processing package versions..."
 
-          # PRECISE APPROACH: Group by exact timestamp (same second = same build)
-          echo "🔗 Grouping images by build time..."
+          # MANIFEST-BASED APPROACH: Use Docker Registry API to find related images
+          echo "🔗 Using Docker Registry API to find manifest relationships..."
           
-          # Get all tagged versions we want to keep (semver + 15 most recent main/SHA)
-          jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | "\(.created_at) \(.id)"' all_versions.json > semver_timestamps.txt
-          jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
-            sort -r | head -15 > main_sha_timestamps.txt
+          # Get tagged versions we want to keep
+          jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | "\(.id) \(.name)"' all_versions.json > keeper_semver.txt
+          jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id) \(.name)"' all_versions.json | \
+            sort -r | head -15 | cut -d' ' -f2,3 > keeper_main_sha.txt
           
-          # For each keeper version, find ALL versions with the same creation time (to the second)
-          > keep_with_related.txt
+          # For each keeper manifest, get its architecture-specific images
+          > keep_with_manifests.txt
           
-          while IFS=' ' read -r timestamp version_id; do
-            if [ -n "$timestamp" ] && [ -n "$version_id" ]; then
-              # Find all versions created in the same second (same multi-arch build)
-              jq -r --arg ts "$timestamp" 'select(.created_at == $ts) | .id' all_versions.json >> keep_with_related.txt
+          while IFS=' ' read -r version_id manifest_sha; do
+            if [ -n "$version_id" ] && [ -n "$manifest_sha" ]; then
+              echo "$version_id" >> keep_with_manifests.txt
+              
+              # Get the manifest from Docker registry to see what it references
+              echo "Checking manifest for version $version_id ($manifest_sha)..."
+              
+              # Try to get manifest - this will show us referenced image SHAs
+              if manifest_info=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                "https://ghcr.io/v2/ahinko/tcpsolis2mqtt/manifests/${manifest_sha#sha256:}" \
+                -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" 2>/dev/null); then
+                
+                # Extract referenced digests and find their version IDs
+                echo "$manifest_info" | jq -r '.manifests[]?.digest // empty' 2>/dev/null | while read -r digest; do
+                  if [ -n "$digest" ]; then
+                    # Find version ID for this digest
+                    jq -r --arg sha "$digest" 'select(.name == $sha) | .id' all_versions.json >> keep_with_manifests.txt
+                  fi
+                done
+              fi
             fi
-          done < <(cat semver_timestamps.txt main_sha_timestamps.txt)
+          done < <(cat keeper_semver.txt keeper_main_sha.txt)
+          
+          # Verify we got manifest data - fail if Docker Registry API doesn't work
+          if [ ! -s keep_with_manifests.txt ]; then
+            echo "❌ Docker Registry API failed - cannot determine manifest relationships"
+            echo "❌ Aborting cleanup to prevent accidental deletion of related images"
+            exit 1
+          fi
           
           # Remove duplicates and sort
-          sort -u keep_with_related.txt > keep_all.txt
+          sort -nu keep_with_manifests.txt > keep_all.txt
           
           # Count for summary
-          semver_count=$(wc -l < semver_timestamps.txt 2>/dev/null || echo 0)
-          main_sha_count=$(wc -l < main_sha_timestamps.txt 2>/dev/null || echo 0)
+          semver_count=$(wc -l < keeper_semver.txt 2>/dev/null || echo 0)
+          main_sha_count=$(wc -l < keeper_main_sha.txt 2>/dev/null || echo 0)
 
           # Get all version IDs and find ones to delete
           jq -r '.id' all_versions.json | sort > all_ids.txt
