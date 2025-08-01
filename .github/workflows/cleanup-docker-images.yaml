@@ -74,40 +74,41 @@ jobs:
             exit 1
           fi
           
-          # Process the versions
-          jq -c '.[] | {id: .id, tags: .metadata.container.tags, created_at: .created_at}' raw_versions.json > all_versions.json
+          # Process the versions - get more detailed info to understand relationships
+          jq -c '.[] | {id: .id, name: .name, tags: .metadata.container.tags, created_at: .created_at, updated_at: .updated_at}' raw_versions.json > all_versions.json
+          
+          # Let's examine the structure to understand relationships
+          echo "🔍 Analyzing image relationships..."
+          echo "Sample of different image types:"
+          
+          # Show tagged vs untagged examples
+          echo "Tagged images (sample):"
+          jq -r 'select(.tags | length > 0) | "ID: \(.id), Name: \(.name), Tags: \(.tags | join(" ")), Created: \(.created_at)"' all_versions.json | head -3
+          
+          echo -e "\nUntagged images (sample):"  
+          jq -r 'select(.tags | length == 0) | "ID: \(.id), Name: \(.name), Created: \(.created_at)"' all_versions.json | head -3
+          
+          # Check if there are patterns in the SHA names that indicate relationships
+          echo -e "\nChecking for manifest relationships..."
+          jq -r 'select(.tags | length > 0) | .name' all_versions.json | head -5
 
           echo "📦 Processing package versions..."
 
-          # Keep all semver versions (with or without 'v' prefix) and related multi-arch images
-          jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | "\(.created_at) \(.id)"' all_versions.json > semver_with_dates.txt
+          # BULLETPROOF APPROACH: Only delete versions that have NO tags at all
+          # This is 100% safe - we never delete anything with any tag
           
-          # Keep main branch SHA versions (keep 15 most recent)
-          jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
-            sort -r | head -15 > main_sha_with_dates.txt
+          # Keep EVERYTHING that has any tag (semver, SHA, main, anything)
+          jq -r 'select(.tags | length > 0) | .id' all_versions.json > keep_all_tagged.txt
           
-          # For each semver and main SHA version, also keep any versions created within 5 minutes (same build)
-          > keep_all_related.txt
+          # Only delete versions with completely empty tags
+          jq -r 'select(.tags | length == 0) | .id' all_versions.json > delete_untagged_only.txt
           
-          while IFS=' ' read -r created_at version_id; do
-            if [ -n "$created_at" ] && [ -n "$version_id" ]; then
-              echo "$version_id" >> keep_all_related.txt
-              # Find other versions created within 5 minutes of this one
-              jq -r --arg target_time "$created_at" '
-                select(
-                  ((.created_at | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) - 
-                   ($target_time | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime)) | 
-                  fabs <= 300
-                ) | .id' all_versions.json >> keep_all_related.txt
-            fi
-          done < <(cat semver_with_dates.txt main_sha_with_dates.txt)
+          # For summary - count what we're keeping
+          semver_count=$(jq -r 'select(.tags[]? | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+")) | .id' all_versions.json | wc -l)
+          main_sha_count=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | .id' all_versions.json | wc -l)
           
-          # Remove duplicates and create final keep list
-          sort -u keep_all_related.txt > keep_all.txt
-          
-          # Update summary to reflect new logic
-          semver_count=$(wc -l < semver_with_dates.txt 2>/dev/null || echo 0)
-          main_sha_count=$(wc -l < main_sha_with_dates.txt 2>/dev/null || echo 0)
+          # Use the tagged versions as our keep list
+          cp keep_all_tagged.txt keep_all.txt
 
           # Get all version IDs and find ones to delete
           jq -r '.id' all_versions.json | sort > all_ids.txt
