@@ -78,14 +78,15 @@ jobs:
             keep=false
             
             # Check if it's a semver version (including major/minor variants)
-            if echo "$tags" | grep -q -E '\bv?[0-9]+(\.[0-9]+)?(\.[0-9]+)?\b'; then
+            # Must NOT match sha- patterns, and must be pure version numbers
+            if echo "$tags" | grep -q -E '\b(v?[0-9]+\.[0-9]+\.[0-9]+|v?[0-9]+\.[0-9]+|v?[0-9]+)\b' && ! echo "$tags" | grep -q 'sha-'; then
               # Identify which type of semver tag this is
               if echo "$tags" | grep -q -E '\bv?[0-9]+\.[0-9]+\.[0-9]+\b'; then
-                reason="semver version (full)"
+                reason="semver-version-full"
               elif echo "$tags" | grep -q -E '\bv?[0-9]+\.[0-9]+\b'; then
-                reason="semver version (major.minor)"
+                reason="semver-version-major-minor"
               elif echo "$tags" | grep -q -E '\bv?[0-9]+\b'; then
-                reason="semver version (major)"
+                reason="semver-version-major"
               fi
               keep=true
             # Check if it's in the 15 most recent main/SHA versions
@@ -98,23 +99,23 @@ jobs:
               if echo "$recent_ids" | grep -q "^$id$"; then
                 rank=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
                   sort -r | head -15 | nl -nln | grep " $id$" | cut -f1)
-                reason="recent main/SHA (#$rank of 15)"
+                reason="recent-main-SHA-rank-$rank-of-15"
                 keep=true
               else
-                reason="old main/SHA (older than 15 most recent)"
+                reason="old-main-SHA-older-than-15-most-recent"
               fi
             # Check if it has no tags (untagged multi-arch image)
             elif [ -z "$tags" ] || [ "$tags" = " " ]; then
-              reason="untagged (likely multi-arch artifact)"
+              reason="untagged-likely-multi-arch-artifact"
             # Has other tags (branch, etc.)
             else
-              reason="branch/other tags: $tags"
+              reason="branch-or-other-tags"
             fi
             
             if [ "$keep" = true ]; then
-              echo "$id $reason" >> keep_reasons.txt
+              echo "$id|$reason" >> keep_reasons.txt
             else
-              echo "$id $reason" >> delete_reasons.txt
+              echo "$id|$reason" >> delete_reasons.txt
             fi
           done < all_versions.json
           
@@ -135,9 +136,9 @@ jobs:
           
           > keep_with_manifests.txt
           
-          while IFS=' ' read -r version_id reason; do
+          while IFS='|' read -r version_id reason; do
             if [ -n "$version_id" ]; then
-              echo "$version_id $reason" >> keep_with_manifests.txt
+              echo "$version_id|$reason" >> keep_with_manifests.txt
               
               # Get the manifest SHA for this version
               manifest_sha=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .name' all_versions.json)
@@ -153,9 +154,9 @@ jobs:
                     if [ -n "$digest" ]; then
                       related_id=$(jq -r --arg sha "$digest" 'select(.name == $sha) | .id' all_versions.json)
                       if [ -n "$related_id" ] && [ "$related_id" != "$version_id" ]; then
-                        echo "$related_id multi-arch component of $version_id ($reason)" >> keep_with_manifests.txt
+                        echo "$related_id|multi-arch-component-of-$version_id-$reason" >> keep_with_manifests.txt
                         # Remove from delete list if it was there
-                        grep -v "^$related_id " delete_reasons.txt > delete_reasons_temp.txt 2>/dev/null || touch delete_reasons_temp.txt
+                        grep -v "^$related_id|" delete_reasons.txt > delete_reasons_temp.txt 2>/dev/null || touch delete_reasons_temp.txt
                         mv delete_reasons_temp.txt delete_reasons.txt
                       fi
                     fi
@@ -172,7 +173,7 @@ jobs:
           fi
           
           # Create final keep list (just IDs) - ensure proper numeric sorting and remove empty lines
-          cut -d' ' -f1 keep_with_manifests.txt | grep -E '^[0-9]+$' | sort -n | uniq > keep_all.txt
+          cut -d'|' -f1 keep_with_manifests.txt | grep -E '^[0-9]+$' | sort -n | uniq > keep_all.txt
 
           # Get all version IDs and find ones to delete - ensure proper numeric sorting  
           jq -r '.id' all_versions.json | grep -E '^[0-9]+$' | sort -n > all_ids.txt
@@ -209,12 +210,12 @@ jobs:
           # Show what we're keeping and why
           echo ""
           echo "✅ Versions being kept:"
-          while IFS=' ' read -r version_id reason_part; do
+          while IFS='|' read -r version_id reason; do
             if [ -n "$version_id" ]; then
-              # Reconstruct the full reason (everything after the first space)
-              reason=$(echo "$version_id $reason_part" | cut -d' ' -f2-)
               tags=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .tags | join(" ")' all_versions.json)
-              echo "  ID: $version_id, Tags: $tags, Reason: $reason"
+              # Convert reason back to readable format
+              readable_reason=$(echo "$reason" | sed 's/-/ /g' | sed 's/rank \([0-9]*\) of 15/(#\1 of 15)/')
+              echo "  ID: $version_id, Tags: $tags, Reason: $readable_reason"
             fi
           done < keep_with_manifests.txt
 
@@ -222,12 +223,12 @@ jobs:
           echo ""
           if [ -s delete_reasons.txt ]; then
             echo "🗑️  Versions that would be deleted:"
-            while IFS=' ' read -r version_id reason_part; do
+            while IFS='|' read -r version_id reason; do
               if [ -n "$version_id" ]; then
-                # Reconstruct the full reason (everything after the first space)
-                reason=$(echo "$version_id $reason_part" | cut -d' ' -f2-)
                 tags=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .tags | join(" ")' all_versions.json)
-                echo "  ID: $version_id, Tags: $tags, Reason: $reason"
+                # Convert reason back to readable format
+                readable_reason=$(echo "$reason" | sed 's/-/ /g')
+                echo "  ID: $version_id, Tags: $tags, Reason: $readable_reason"
               fi
             done < delete_reasons.txt
 
