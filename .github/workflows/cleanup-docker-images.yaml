@@ -77,9 +77,16 @@ jobs:
             reason=""
             keep=false
             
-            # Check if it's a semver version
-            if echo "$tags" | grep -q -E '\bv?[0-9]+\.[0-9]+\.[0-9]+\b'; then
-              reason="semver version"
+            # Check if it's a semver version (including major/minor variants)
+            if echo "$tags" | grep -q -E '\bv?[0-9]+(\.[0-9]+)?(\.[0-9]+)?\b'; then
+              # Identify which type of semver tag this is
+              if echo "$tags" | grep -q -E '\bv?[0-9]+\.[0-9]+\.[0-9]+\b'; then
+                reason="semver version (full)"
+              elif echo "$tags" | grep -q -E '\bv?[0-9]+\.[0-9]+\b'; then
+                reason="semver version (major.minor)"
+              elif echo "$tags" | grep -q -E '\bv?[0-9]+\b'; then
+                reason="semver version (major)"
+              fi
               keep=true
             # Check if it's in the 15 most recent main/SHA versions
             elif echo "$tags" | grep -q -E '\b(main|sha-[a-f0-9]{7})\b'; then
@@ -113,6 +120,19 @@ jobs:
           
           # Now find multi-arch images related to kept versions
           echo "🔗 Finding multi-arch images related to kept versions..."
+          
+          # Debug: show what we initially decided to keep
+          echo "Debug: Initial keep decisions:"
+          total_keep=$(wc -l < keep_reasons.txt)
+          semver_keep=$(grep "semver version" keep_reasons.txt | wc -l)
+          mainsha_keep=$(grep "recent main/SHA" keep_reasons.txt | wc -l)
+          echo "Total initial keep decisions: $total_keep"
+          echo "Semver versions: $semver_keep"
+          echo "Main/SHA versions: $mainsha_keep"
+          
+          echo "Main/SHA versions being kept:"
+          grep "recent main/SHA" keep_reasons.txt || echo "No main/SHA versions found"
+          
           > keep_with_manifests.txt
           
           while IFS=' ' read -r version_id reason; do
