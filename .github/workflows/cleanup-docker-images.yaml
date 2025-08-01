@@ -140,16 +140,19 @@ jobs:
               manifest_sha=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .name' all_versions.json)
 
               if [ -n "$manifest_sha" ]; then
+                echo "  Checking manifest for version $version_id: $manifest_sha"
                 # Get manifest from Docker registry
                 if manifest_info=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
                   "https://ghcr.io/v2/${{ github.repository_owner }}/$PACKAGE_NAME/manifests/${manifest_sha#sha256:}" \
                   -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" 2>/dev/null); then
 
+                  echo "  Manifest response received, parsing..."
                   # Extract referenced digests and find their version IDs
                   echo "$manifest_info" | jq -r '.manifests[]?.digest // empty' 2>/dev/null | while read -r digest; do
                     if [ -n "$digest" ]; then
                       related_id=$(jq -r --arg sha "$digest" 'select(.name == $sha) | .id' all_versions.json)
                       if [ -n "$related_id" ] && [ "$related_id" != "$version_id" ]; then
+                        echo "    Found related image: $related_id (digest: $digest)"
                         echo "$related_id|multi-arch-component-of-$version_id-$reason" >> keep_with_manifests.txt
                         # Remove from delete list if it was there
                         grep -v "^$related_id|" delete_reasons.txt > delete_reasons_temp.txt 2>/dev/null || touch delete_reasons_temp.txt
@@ -157,7 +160,11 @@ jobs:
                       fi
                     fi
                   done
+                else
+                  echo "  Failed to get manifest for $version_id"
                 fi
+              else
+                echo "  No manifest SHA found for version $version_id"
               fi
             fi
           done < keep_reasons.txt
