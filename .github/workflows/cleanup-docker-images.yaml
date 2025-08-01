@@ -83,10 +83,14 @@ jobs:
               keep=true
             # Check if it's in the 15 most recent main/SHA versions
             elif echo "$tags" | grep -q -E '\b(main|sha-[a-f0-9]{7})\b'; then
-              # Check if it's in the top 15 by date
-              rank=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
-                sort -r | nl -nw1 | grep " $id$" | cut -d' ' -f1)
-              if [ -n "$rank" ] && [ "$rank" -le 15 ]; then
+              # Get the 15 most recent main/SHA IDs
+              recent_ids=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
+                sort -r | head -15 | cut -d' ' -f2)
+              
+              # Check if this ID is in the recent list
+              if echo "$recent_ids" | grep -q "^$id$"; then
+                rank=$(jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
+                  sort -r | head -15 | nl -nln | grep " $id$" | cut -f1)
                 reason="recent main/SHA (#$rank of 15)"
                 keep=true
               else
