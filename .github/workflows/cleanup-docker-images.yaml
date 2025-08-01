@@ -40,7 +40,6 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: |
           set -e
-          set -x  # Enable debug output
 
           if [ "$DRY_RUN" = "true" ]; then
             echo "🔍 DRY RUN MODE - No images will be deleted"
@@ -67,7 +66,7 @@ jobs:
           # Create detailed keep/delete lists with reasons
           > keep_reasons.txt
           > delete_reasons.txt
-          
+
           # Process each version and determine fate with reason
           echo "Processing $(wc -l < all_versions.json) versions..."
           line_count=0
@@ -80,19 +79,19 @@ jobs:
             tags=$(echo "$line" | jq -r '.tags | join(" ")' 2>/dev/null)
             name=$(echo "$line" | jq -r '.name' 2>/dev/null)
             created=$(echo "$line" | jq -r '.created_at' 2>/dev/null)
-            
+
             if [ -z "$id" ] || [ "$id" = "null" ]; then
               echo "Warning: Invalid line: $line"
               continue
             fi
-            
+
             reason=""
             keep=false
-            
+
             # Check if it's a semver version (has version number tags but not ONLY sha tags)
             has_version=$(echo "$tags" | grep -o -E '\b[0-9]+(\.[0-9]+)*\b' | head -1 || true)
             has_sha=$(echo "$tags" | grep -c 'sha-' || true)
-            
+
             if [ -n "$has_version" ]; then
               if echo "$tags" | grep -q -E '\b[0-9]+\.[0-9]+\.[0-9]+\b'; then
                 reason="semver-version-full"
@@ -107,7 +106,7 @@ jobs:
               # Create temp file with timestamped main/SHA versions
               jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
                 sort -r | head -15 > recent_main_sha.tmp
-              
+
               # Check if this ID is in the recent list and get its rank
               rank=$(grep " $id$" recent_main_sha.tmp | head -1 || true)
               if [ -n "$rank" ]; then
@@ -125,21 +124,21 @@ jobs:
             else
               reason="branch-or-other-tags"
             fi
-            
+
             if [ "$keep" = true ]; then
               echo "$id|$reason" >> keep_reasons.txt
             else
               echo "$id|$reason" >> delete_reasons.txt
             fi
           done < all_versions.json
-          
+
           echo "Completed processing $line_count versions"
           echo "Keep decisions: $(wc -l < keep_reasons.txt)"
           echo "Delete decisions: $(wc -l < delete_reasons.txt)"
-          
+
           # Now find multi-arch images related to kept versions
           echo "🔗 Finding multi-arch images related to kept versions..."
-          
+
           # Debug: show what we initially decided to keep
           echo "Debug: Initial keep decisions:"
           total_keep=$(wc -l < keep_reasons.txt)
@@ -148,25 +147,25 @@ jobs:
           echo "Total initial keep decisions: $total_keep"
           echo "Semver versions: $semver_keep"
           echo "Main/SHA versions: $mainsha_keep"
-          
+
           echo "Main/SHA versions being kept:"
           grep "recent main/SHA" keep_reasons.txt || echo "No main/SHA versions found"
-          
+
           > keep_with_manifests.txt
-          
+
           while IFS='|' read -r version_id reason; do
             if [ -n "$version_id" ]; then
               echo "$version_id|$reason" >> keep_with_manifests.txt
-              
+
               # Get the manifest SHA for this version
               manifest_sha=$(jq -r --arg id "$version_id" 'select(.id == ($id | tonumber)) | .name' all_versions.json)
-              
+
               if [ -n "$manifest_sha" ]; then
                 # Get manifest from Docker registry
                 if manifest_info=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
                   "https://ghcr.io/v2/${{ github.repository_owner }}/$PACKAGE_NAME/manifests/${manifest_sha#sha256:}" \
                   -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" 2>/dev/null); then
-                  
+
                   # Extract referenced digests and find their version IDs
                   echo "$manifest_info" | jq -r '.manifests[]?.digest // empty' 2>/dev/null | while read -r digest; do
                     if [ -n "$digest" ]; then
@@ -183,19 +182,19 @@ jobs:
               fi
             fi
           done < keep_reasons.txt
-          
+
           # Verify we have data - fail if API doesn't work
           if [ ! -s keep_with_manifests.txt ]; then
             echo "❌ Cannot determine manifest relationships - aborting cleanup"
             exit 1
           fi
-          
+
           # Create final keep list (just IDs) - ensure proper numeric sorting and remove empty lines
           cut -d'|' -f1 keep_with_manifests.txt | grep -E '^[0-9]+$' | sort -n | uniq > keep_all.txt
 
-          # Get all version IDs and find ones to delete - ensure proper numeric sorting  
+          # Get all version IDs and find ones to delete - ensure proper numeric sorting
           jq -r '.id' all_versions.json | grep -E '^[0-9]+$' | sort -n > all_ids.txt
-          
+
           # Debug: check if files are properly sorted
           echo "Debug: First 5 lines of all_ids.txt:"
           head -5 all_ids.txt
@@ -205,7 +204,7 @@ jobs:
           tail -5 all_ids.txt
           echo "Debug: Last 5 lines of keep_all.txt:"
           tail -5 keep_all.txt
-          
+
           # Use a safer approach - create delete list manually
           > delete_ids.txt
           while IFS= read -r id; do
