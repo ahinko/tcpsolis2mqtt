@@ -75,15 +75,7 @@ jobs:
           fi
           
           # Process the versions
-          echo "Raw versions file size: $(wc -c < raw_versions.json)"
-          echo "First few lines of raw_versions.json:"
-          head -3 raw_versions.json || echo "File is empty or unreadable"
-          
-          jq '.[] | {id: .id, tags: .metadata.container.tags, created_at: .created_at}' raw_versions.json > all_versions.json
-          
-          echo "Processed versions file size: $(wc -c < all_versions.json)"
-          echo "First few lines of all_versions.json:"
-          head -3 all_versions.json || echo "File is empty or unreadable"
+          jq -c '.[] | {id: .id, tags: .metadata.container.tags, created_at: .created_at}' raw_versions.json > all_versions.json
 
           echo "📦 Processing package versions..."
 
@@ -91,8 +83,8 @@ jobs:
           jq -r 'select(.tags[]? | test("^v[0-9]+\\.[0-9]+\\.[0-9]+")) | .id' all_versions.json > keep_semver.txt
 
           # Keep main branch SHA versions (keep 15 most recent)
-          jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | {id: .id, created_at: .created_at}' all_versions.json | \
-            sort -k2 -r | head -15 | jq -r '.id' > keep_main_sha.txt
+          jq -r 'select(.tags[]? | test("^main$|^sha-[a-f0-9]{7}$")) | "\(.created_at) \(.id)"' all_versions.json | \
+            sort -r | head -15 | cut -d' ' -f2 > keep_main_sha.txt
 
           # Combine all versions to keep
           cat keep_semver.txt keep_main_sha.txt 2>/dev/null | sort -u > keep_all.txt
