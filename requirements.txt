@@ -3,5 +3,5 @@ environs==14.3.0
 marshmallow==4.0.1
 paho-mqtt==2.1.0
 pymodbus==3.11.3
-pyyaml==6.0.2
+pyyaml==6.0.3
 requests==2.32.5
