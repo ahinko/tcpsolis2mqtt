@@ -1,6 +1,6 @@
 arrow==1.4.0
 environs==14.5.0
-marshmallow==4.1.1
+marshmallow==4.1.2
 paho-mqtt==2.1.0
 pymodbus==3.11.4
 pyyaml==6.0.3
