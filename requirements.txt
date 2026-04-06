@@ -1,5 +1,5 @@
 arrow==1.4.0
-environs==15.0.0
+environs==15.0.1
 marshmallow==4.3.0
 paho-mqtt==2.1.0
 pymodbus==3.12.1
