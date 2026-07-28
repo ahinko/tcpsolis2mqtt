@@ -54,6 +54,7 @@
     scale: 0.1
     decimals: 2
     rate_limited: true
+    resets_daily: true
   homeassistant:
     device: sensor
     state_class: total_increasing

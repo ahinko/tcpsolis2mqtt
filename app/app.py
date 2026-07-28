@@ -37,6 +37,7 @@ class App:
         self.register_span_end = 0
 
         self.last_accepted_value = {}
+        self.current_day = None
 
         if self.config["mqtt"]["enabled"]:
             self.mqtt = Mqtt(self.config["mqtt"])
@@ -88,6 +89,60 @@ class App:
             return
 
         self.mqtt.publish(topic, payload, retain=retain)
+
+    def local_date(self):
+        return arrow.now("local").format("YYYY-MM-DD")
+
+    def load_current_day(self):
+        # Which day the published daily counters belong to has to survive a restart.
+        # Without it a container restart would replay the midnight reset and double
+        # count everything generated earlier the same day.
+        state_topic = f"{self.config['mqtt']['topic_prefix']}/_state/current_day"
+
+        if not self.config["mqtt"]["enabled"]:
+            self.current_day = self.local_date()
+            return
+
+        # Assume the current day when nothing is stored, so a first ever start does not
+        # reset a counter that may already hold generation from earlier today.
+        self.current_day = self.mqtt.read_retained(state_topic) or self.local_date()
+        logging.info(f"Daily counters belong to {self.current_day}")
+
+    def reset_daily_counters(self):
+        # The inverter is asleep at midnight and only clears its own daily counter once
+        # it wakes up hours later, until then it keeps reporting yesterday's total.
+        # Publish the reset on the wall clock instead so the counter never reports
+        # yesterday's generation as if it happened today.
+        today = self.local_date()
+
+        if self.current_day == today:
+            return
+
+        for sensor in self.sensors_config:
+            if (
+                not sensor["active"]
+                or "modbus" not in sensor
+                or not sensor["modbus"]["resets_daily"]
+            ):
+                continue
+
+            logging.info(f"New day, resetting {sensor['name']}")
+
+            # Move the plausibility baseline with it, the counter starts from zero now.
+            self.last_accepted_value[sensor["name"]] = (0, monotonic())
+
+            self.publish(
+                f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
+                0,
+                retain=True,
+            )
+
+        self.current_day = today
+        self.publish(
+            f"{self.config['mqtt']['topic_prefix']}/_state/current_day",
+            today,
+            retain=True,
+        )
 
     def generate_ha_discovery_topics(self):
         if not self.config["mqtt"]["enabled"]:
@@ -479,8 +534,15 @@ class App:
         # Get register interval, find lowest and higest register numbers
         self.get_register_interval()
 
+        # Find out which day the counters currently published to MQTT belong to
+        self.load_current_day()
+
         while True:
             logging.debug("Datalogger scan start at " + datetime.now().isoformat())
+
+            # Reset the daily counters on the wall clock, the datalogger is unreachable
+            # at midnight so this cannot wait for a successful poll
+            self.reset_daily_counters()
 
             ## Query modbus
             registers = self.query_modbus()

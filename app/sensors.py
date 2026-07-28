@@ -23,6 +23,7 @@ class Modbus(Schema):
     decimals = fields.Int(required=False)
     never_zero = fields.Bool(required=False, load_default=False)
     rate_limited = fields.Bool(required=False, load_default=False)
+    resets_daily = fields.Bool(required=False, load_default=False)
     bit = fields.Nested(Bit(), required=False)
 
     @validates_schema()
