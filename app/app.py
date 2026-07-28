@@ -320,6 +320,32 @@ class App:
             f"First register: {self.register_span_start}, Last register: {self.register_span_end}"
         )
 
+    def response_is_dead(self, registers):
+        # The datalogger sometimes answers with a complete, well formed block of registers
+        # where every value is zero, usually while the inverter itself is asleep. Sensors
+        # flagged never_zero hold lifetime counters that cannot be zero on a commissioned
+        # inverter, so a zero there means the whole response is bogus.
+        for sensor in self.sensors_config:
+            if (
+                not sensor["active"]
+                or "modbus" not in sensor
+                or not sensor["modbus"]["never_zero"]
+            ):
+                continue
+
+            register = sensor["modbus"]["register"]
+            count = 2 if sensor["modbus"]["read_type"] == "long" else 1
+
+            if any(registers.get(register + offset) for offset in range(count)):
+                continue
+
+            logging.info(
+                f"Validation failed, {sensor['description']} (register {register}) is zero"
+            )
+            return True
+
+        return False
+
     def query_modbus(self):
         logging.info("Querying modbus")
 
@@ -400,6 +426,9 @@ class App:
             logging.info(
                 f"Validation of number of queried registers failed. Queried: {len(registers)}, received: {queried_registers_counter}"
             )
+            return {}
+
+        if self.response_is_dead(registers):
             return {}
 
         return registers

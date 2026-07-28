@@ -37,6 +37,7 @@
     read_type: long
     function_code: 4
     scale: 1
+    never_zero: true
   homeassistant:
     device: sensor
     state_class: total_increasing

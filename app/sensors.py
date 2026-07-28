@@ -21,6 +21,7 @@ class Modbus(Schema):
     function_code = fields.Int(required=True)
     scale = fields.Float(required=False)
     decimals = fields.Int(required=False)
+    never_zero = fields.Bool(required=False, load_default=False)
     bit = fields.Nested(Bit(), required=False)
 
     @validates_schema()
