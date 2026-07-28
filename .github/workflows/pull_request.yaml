@@ -24,15 +24,20 @@ jobs:
         run: |
           python3 -m pip install -U pip
           python3 -m pip install -r requirements.txt
+          python3 -m pip install -r requirements-dev.txt
           python3 -m pip install ruff
 
       - name: Check formatting
         run: |
-          ruff format --check --diff app
+          ruff format --check --diff app tests
 
       - name: Check lint
         run: |
-          ruff check app
+          ruff check app tests
+
+      - name: Run tests
+        run: |
+          python3 -m pytest tests -q
 
   build-test:
     runs-on: ubuntu-latest

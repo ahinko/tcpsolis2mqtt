@@ -3,3 +3,5 @@ reference
 config.example.yaml
 readme.md
 Dockerfile
+tests
+requirements-dev.txt

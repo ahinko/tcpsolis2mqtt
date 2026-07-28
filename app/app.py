@@ -38,6 +38,8 @@ class App:
 
         self.last_accepted_value = {}
         self.current_day = None
+        self.previous_day_total = {}
+        self.awaiting_new_day = {}
 
         if self.config["mqtt"]["enabled"]:
             self.mqtt = Mqtt(self.config["mqtt"])
@@ -93,20 +95,49 @@ class App:
     def local_date(self):
         return arrow.now("local").format("YYYY-MM-DD")
 
-    def load_current_day(self):
-        # Which day the published daily counters belong to has to survive a restart.
-        # Without it a container restart would replay the midnight reset and double
-        # count everything generated earlier the same day.
-        state_topic = f"{self.config['mqtt']['topic_prefix']}/_state/current_day"
+    def daily_sensors(self):
+        for sensor in self.sensors_config:
+            if (
+                sensor["active"]
+                and "modbus" in sensor
+                and sensor["modbus"]["resets_daily"]
+            ):
+                yield sensor
 
+    def state_topic(self, *parts):
+        return "/".join(
+            [self.config["mqtt"]["topic_prefix"], "_state", *[str(p) for p in parts]]
+        )
+
+    def load_state(self):
+        # Which day the published counters belong to, and what each of them read before
+        # the last reset, both have to survive a restart. Without the day a restart
+        # would replay the midnight reset and double count everything generated earlier
+        # the same day, and without the previous total the first reading of the morning
+        # is unguarded.
         if not self.config["mqtt"]["enabled"]:
             self.current_day = self.local_date()
             return
 
         # Assume the current day when nothing is stored, so a first ever start does not
         # reset a counter that may already hold generation from earlier today.
-        self.current_day = self.mqtt.read_retained(state_topic) or self.local_date()
+        self.current_day = (
+            self.mqtt.read_retained(self.state_topic("current_day"))
+            or self.local_date()
+        )
         logging.info(f"Daily counters belong to {self.current_day}")
+
+        for sensor in self.daily_sensors():
+            stored = self.mqtt.read_retained(
+                self.state_topic(sensor["name"], "previous_total")
+            )
+
+            if stored is None:
+                continue
+
+            self.previous_day_total[sensor["name"]] = float(stored)
+            self.awaiting_new_day[sensor["name"]] = True
+            logging.info(f"{sensor['name']} read {stored} before the last reset")
 
     def reset_daily_counters(self):
         # The inverter is asleep at midnight and only clears its own daily counter once
@@ -118,31 +149,52 @@ class App:
         if self.current_day == today:
             return
 
-        for sensor in self.sensors_config:
-            if (
-                not sensor["active"]
-                or "modbus" not in sensor
-                or not sensor["modbus"]["resets_daily"]
-            ):
-                continue
+        for sensor in self.daily_sensors():
+            name = sensor["name"]
+            logging.info(f"New day, resetting {name}")
 
-            logging.info(f"New day, resetting {sensor['name']}")
+            # Whatever the counter last read is what the inverter keeps reporting until
+            # it clears the register itself, so remember it to recognise it on sight.
+            previous_total = self.value_before_reset(sensor)
+
+            if previous_total is not None:
+                self.previous_day_total[name] = previous_total
+                self.awaiting_new_day[name] = True
+                self.publish(
+                    self.state_topic(name, "previous_total"),
+                    previous_total,
+                    retain=True,
+                )
 
             # Move the plausibility baseline with it, the counter starts from zero now.
-            self.last_accepted_value[sensor["name"]] = (0, monotonic())
+            self.last_accepted_value[name] = (0, monotonic())
 
             self.publish(
-                f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
+                f"{self.config['mqtt']['topic_prefix']}/{name}",
                 0,
                 retain=True,
             )
 
         self.current_day = today
-        self.publish(
-            f"{self.config['mqtt']['topic_prefix']}/_state/current_day",
-            today,
-            retain=True,
-        )
+        self.publish(self.state_topic("current_day"), today, retain=True)
+
+    def value_before_reset(self, sensor):
+        name = sensor["name"]
+
+        if name in self.last_accepted_value:
+            return self.last_accepted_value[name][0]
+
+        if not self.config["mqtt"]["enabled"]:
+            return None
+
+        # Nothing accepted yet this run, so the retained topic still holds the value
+        # Home Assistant is showing, which is the one the reset is about to replace.
+        try:
+            return float(
+                self.mqtt.read_retained(f"{self.config['mqtt']['topic_prefix']}/{name}")
+            )
+        except (TypeError, ValueError):
+            return None
 
     def generate_ha_discovery_topics(self):
         if not self.config["mqtt"]["enabled"]:
@@ -385,6 +437,23 @@ class App:
         # what a genuine counter reset looks like.
         name = sensor["name"]
         now = monotonic()
+        resolution = sensor["modbus"].get("scale", 1)
+
+        # Until the inverter clears its own daily register it keeps reporting yesterday's
+        # total verbatim, and after a night without a single successful poll the rate
+        # limit below has accumulated enough allowance to let that through. Recognise the
+        # value instead. A reading that is not yesterday's total means the inverter has
+        # moved on, so stop looking for it.
+        if self.awaiting_new_day.get(name):
+            if abs(value - self.previous_day_total[name]) <= 2 * resolution:
+                logging.warning(
+                    f"Ignoring {name}: {value} is still yesterday's total, "
+                    "the inverter has not reset the register yet"
+                )
+                return False
+
+            self.awaiting_new_day[name] = False
+
         previous = self.last_accepted_value.get(name)
 
         if previous is None or value <= previous[0]:
@@ -399,7 +468,7 @@ class App:
         could_have_generated = (
             self.config["inverter"]["max_power_kw"] * (now - last_time) / 3600
         )
-        allowance = could_have_generated * 1.2 + sensor["modbus"].get("scale", 1)
+        allowance = could_have_generated * 1.2 + resolution
 
         if value - last_value > allowance:
             logging.warning(
@@ -535,7 +604,7 @@ class App:
         self.get_register_interval()
 
         # Find out which day the counters currently published to MQTT belong to
-        self.load_current_day()
+        self.load_state()
 
         while True:
             logging.debug("Datalogger scan start at " + datetime.now().isoformat())
