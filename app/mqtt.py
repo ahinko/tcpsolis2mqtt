@@ -1,5 +1,6 @@
 from paho.mqtt import client as mqtt_client
-from time import sleep
+from threading import Event
+from time import monotonic, sleep
 import logging
 
 
@@ -23,6 +24,41 @@ class Mqtt(mqtt_client.Client):
 
     def __del__(self):
         self.disconnect()
+
+    def wait_until_connected(self, timeout=5):
+        deadline = monotonic() + timeout
+
+        while not self.is_connected() and monotonic() < deadline:
+            sleep(0.1)
+
+        return self.is_connected()
+
+    def read_retained(self, topic, timeout=5):
+        # Retained topics are the only storage this app has, so they double as a place
+        # to keep state across restarts. A broker delivers a retained message as soon as
+        # we subscribe, so if nothing arrives within the timeout there is no stored state.
+        if not self.wait_until_connected(timeout):
+            logging.error("MQTT not connected, unable to read %s", topic)
+            return None
+
+        payload = None
+        received = Event()
+
+        def on_message(client, userdata, message):
+            nonlocal payload
+            payload = message.payload.decode()
+            received.set()
+
+        self.on_message = on_message
+        self.subscribe(topic)
+
+        if not received.wait(timeout):
+            logging.info("MQTT no retained message on %s", topic)
+
+        self.unsubscribe(topic)
+        self.on_message = None
+
+        return payload
 
     def on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
