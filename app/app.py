@@ -10,7 +10,7 @@ from typing import Any
 from config import AppConfig
 from sensors import Sensor
 
-from time import sleep
+from time import monotonic, sleep
 from datetime import datetime
 
 from environs import Env
@@ -35,6 +35,8 @@ class App:
 
         self.register_span_start = 0
         self.register_span_end = 0
+
+        self.last_accepted_value = {}
 
         if self.config["mqtt"]["enabled"]:
             self.mqtt = Mqtt(self.config["mqtt"])
@@ -320,6 +322,40 @@ class App:
             f"First register: {self.register_span_start}, Last register: {self.register_span_end}"
         )
 
+    def value_is_plausible(self, sensor, value):
+        # A cumulative energy counter cannot climb faster than the inverter is able to
+        # generate. The datalogger intermittently serves a value belonging to a previous
+        # day, which arrives as a jump of tens of kWh between two polls and which Home
+        # Assistant records as real generation. A decrease is always allowed, that is
+        # what a genuine counter reset looks like.
+        name = sensor["name"]
+        now = monotonic()
+        previous = self.last_accepted_value.get(name)
+
+        if previous is None or value <= previous[0]:
+            self.last_accepted_value[name] = (value, now)
+            return True
+
+        last_value, last_time = previous
+
+        # The resolution of the register is allowed on top of what the inverter could
+        # have generated, otherwise a counter reporting whole kWh could never tick over
+        # within a single poll interval.
+        could_have_generated = (
+            self.config["inverter"]["max_power_kw"] * (now - last_time) / 3600
+        )
+        allowance = could_have_generated * 1.2 + sensor["modbus"].get("scale", 1)
+
+        if value - last_value > allowance:
+            logging.warning(
+                f"Ignoring implausible {name}: {last_value} -> {value} after "
+                f"{round(now - last_time)}s, at most {round(allowance, 2)} was possible"
+            )
+            return False
+
+        self.last_accepted_value[name] = (value, now)
+        return True
+
     def response_is_dead(self, registers):
         # The datalogger sometimes answers with a complete, well formed block of registers
         # where every value is zero, usually while the inverter itself is asleep. Sensors
@@ -552,6 +588,11 @@ class App:
                     logging.error(f"Error occured {e}")
 
                 else:
+                    if sensor["modbus"]["rate_limited"] and not self.value_is_plausible(
+                        sensor, value
+                    ):
+                        continue
+
                     logging.info("Publishing sensor %s: %s", sensor["name"], value)
 
                     self.publish(

@@ -27,6 +27,7 @@ class InverterConfig(Schema):
     name = fields.Str(required=False, load_default="")
     manufacturer = fields.Str(required=False, load_default="")
     model = fields.Str(required=False, load_default="")
+    max_power_kw = fields.Float(required=False, load_default=15)
 
 
 class MqttConfig(Schema):
