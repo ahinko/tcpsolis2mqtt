@@ -12,12 +12,15 @@ datalogger:
     enabled: True
     user: admin
     password: "123456789"
+# Required
 inverter:
   name: Solis
   manufacturer: Ginlong Technologies
   model: S5-GR3P15K
-  # Rated power, used to reject energy counter readings that climb faster than
-  # the inverter could possibly have generated
+  # Required. The nameplate rating of YOUR inverter, in kW. Used to reject energy
+  # counter readings that climb faster than it could possibly have generated, so a
+  # wrong value makes that check either useless or actively harmful. Not a tuning
+  # knob: if real readings are being rejected, the cause is elsewhere.
   max_power_kw: 15
 mqtt:
   enabled: True

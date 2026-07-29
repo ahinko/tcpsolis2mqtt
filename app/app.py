@@ -22,7 +22,7 @@ from pymodbus import pymodbus_apply_logging_config
 from pymodbus.client import ModbusTcpClient
 from pymodbus.exceptions import ModbusException
 
-VERSION = "2.0.0"
+VERSION = "3.0.0"
 
 # A local date is YYYY-MM-DD, so the period a date belongs to is a prefix of it.
 PERIOD_LENGTH = {"daily": 10, "monthly": 7, "yearly": 4}

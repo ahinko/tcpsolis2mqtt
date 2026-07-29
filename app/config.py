@@ -27,7 +27,12 @@ class InverterConfig(Schema):
     name = fields.Str(required=False, load_default="")
     manufacturer = fields.Str(required=False, load_default="")
     model = fields.Str(required=False, load_default="")
-    max_power_kw = fields.Float(required=False, load_default=15)
+    # No default. This is the nameplate rating of a specific inverter, and the
+    # plausibility check rejects any energy counter reading that climbs faster than
+    # it allows. Guessing 15 because that is what the author owns makes the guard
+    # either useless or actively wrong on anyone else's hardware: too high and a
+    # stale reading walks straight through, too low and real generation is refused.
+    max_power_kw = fields.Float(required=True)
 
 
 class MqttConfig(Schema):
@@ -55,5 +60,8 @@ class MqttConfig(Schema):
 class AppConfig(Schema):
     debug = fields.Bool(load_default=False)
     datalogger = fields.Nested(DataLoggerConfig(), required=True)
-    inverter = fields.Nested(InverterConfig(), required=False)
+    # Required, otherwise max_power_kw above is dodged by leaving the whole block
+    # out, and the app fails with a KeyError at the first reading instead of a clear
+    # message at startup.
+    inverter = fields.Nested(InverterConfig(), required=True)
     mqtt = fields.Nested(MqttConfig(), required=True)

@@ -62,6 +62,18 @@ Maybe, I have no plans for it at the moment. My main goal is to get the data int
 ## Getting started
 Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`. Most values should be self-explanatory. `register_chunks` is set to 20 by default but during my testing I've been able to query my datalogger for more than 80 registers at the same time.
 
+### Upgrading to 3.0
+**`inverter.max_power_kw` is now required and the container won't start without it.** Set it to the nameplate rating of your inverter, in kW:
+
+```yaml
+inverter:
+  max_power_kw: 15
+```
+
+It used to default to 15, which is the rating of the inverter this project was written against. That default was a bad idea. Energy counter readings are rejected if they climb faster than this value allows, so on a 5 kW inverter the check was doing almost nothing, and the failure is silent — you'd only find out when a bogus reading reached Home Assistant and corrupted the statistics. Better to refuse to start than to guess.
+
+It's a nameplate rating, not a tuning knob. If real readings are being rejected, the value isn't the problem.
+
 ### Environment variables
 It's currently only possible to use environment variables to set MQTT user and password. Use `MQTT_USER` and `MQTT_PASSWORD`.
 
