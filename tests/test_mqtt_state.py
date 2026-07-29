@@ -7,8 +7,10 @@ an empty topic is only detectable by timing out.
 """
 
 import asyncio
+import logging
 import threading
 from functools import partial
+from time import monotonic, sleep
 
 import pytest
 
@@ -136,6 +138,51 @@ def build_app(client, mqtt_config, sensors_config, day):
     app.mqtt.read_retained = partial(Mqtt.read_retained, client, timeout=1)
     app.local_date = lambda: day
     return app
+
+
+def wait_for(condition, timeout=5):
+    deadline = monotonic() + timeout
+
+    while not condition() and monotonic() < deadline:
+        sleep(0.05)
+
+    return condition()
+
+
+def test_the_connect_callback_fires(broker, mqtt_config, caplog):
+    caplog.set_level(logging.INFO)
+    client = Mqtt({**mqtt_config, "client_id": "callback-test"})
+
+    try:
+        assert client.wait_until_connected(10), "client did not connect"
+        # It runs on the network thread, a moment after is_connected flips.
+        assert wait_for(lambda: "MQTT Connected to Broker!" in caplog.text)
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+
+def test_a_deliberate_disconnect_stays_disconnected(broker, mqtt_config, caplog):
+    # The disconnect handler used to run a manual reconnect loop, twelve attempts
+    # with exponential backoff, on paho's own network thread. It was believed to be
+    # dead code, on the grounds that a method named on_disconnect shadows paho's
+    # property of the same name so the property setter never runs. It does never run,
+    # _on_disconnect really does stay None, but paho reads the public attribute
+    # rather than the private one, so the handler fired and the loop was live: a
+    # disconnect was logged and then immediately undone, "MQTT Reconnecting in 1
+    # seconds" followed by "MQTT Reconnected successfully!".
+    caplog.set_level(logging.INFO)
+    client = Mqtt({**mqtt_config, "client_id": "disconnect-test"})
+
+    try:
+        assert client.wait_until_connected(10), "client did not connect"
+        client.disconnect()
+
+        assert wait_for(lambda: not client.is_connected())
+        assert "Reconnecting" not in caplog.text
+        assert not wait_for(lambda: client.is_connected(), timeout=2)
+    finally:
+        client.loop_stop()
 
 
 def test_missing_retained_topic_reads_as_none(connect, clean):

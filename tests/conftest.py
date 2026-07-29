@@ -52,6 +52,7 @@ class Clock:
 def clock(monkeypatch):
     clock = Clock()
     monkeypatch.setattr(app_module, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(app_module, "sleep", clock.advance)
     return clock
 
 
@@ -63,17 +64,31 @@ def make_app(sensors_config):
     assertions look at.
     """
 
-    def _make(day="2026-07-28", max_power_kw=15):
+    def _make(day="2026-07-28", max_power_kw=15, poll_retries=3, register_chunks=80):
         app = App.__new__(App)
         app.config = {
             "mqtt": {"enabled": False, "topic_prefix": "tcpsolis2mqtt"},
             "inverter": {"max_power_kw": max_power_kw},
+            "datalogger": {
+                "host": "192.0.2.1",
+                "port": 502,
+                "device_id": 1,
+                "poll_retries": poll_retries,
+                "register_chunks": register_chunks,
+                "http": {"enabled": False},
+            },
         }
         app.sensors_config = sensors_config
         app.last_accepted_value = {}
         app.current_day = None
         app.previous_period_total = {}
         app.awaiting_new_period = {}
+
+        app.datalogger_offline = False
+        app.datalogger_unreachable = True
+        app.retries_done = 0
+        app.register_span_start = 0
+        app.register_span_end = 0
 
         app.day = day
         app.local_date = lambda: app.day

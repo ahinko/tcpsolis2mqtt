@@ -27,6 +27,10 @@ VERSION = "2.0.0"
 # A local date is YYYY-MM-DD, so the period a date belongs to is a prefix of it.
 PERIOD_LENGTH = {"daily": 10, "monthly": 7, "yearly": 4}
 
+# How hard to try for one chunk of registers before giving up on the whole poll.
+CHUNK_ATTEMPTS = 3
+CHUNK_RETRY_DELAY = 2
+
 
 class App:
     def __init__(self):
@@ -390,7 +394,7 @@ class App:
             self.datalogger_unreachable = True
 
             # Check if retries are done
-            if self.retries_done <= self.config["datalogger"]["poll_retries"]:
+            if self.retries_done < self.config["datalogger"]["poll_retries"]:
                 logging.info(
                     f"Datalogger not reachable, done {self.retries_done} of {self.config['datalogger']['poll_retries']} retries"
                 )
@@ -573,6 +577,43 @@ class App:
         logging.info("Validation failed, every register in the response is zero")
         return True
 
+    def read_chunk(self, client, address, count):
+        # One chunk of registers, or None if the datalogger would not give it up.
+        # Bounded attempts with a pause between them: the loop this replaces never
+        # advanced and never slept, so a chunk that kept failing was retried as fast
+        # as the network allowed. On the morning of 2026-07-29 single poll cycles made
+        # 73, 433, 447, 405 and 473 attempts, roughly two requests a second sustained
+        # for minutes, concentrated in the 05:30-05:45 window when the datalogger was
+        # already struggling to stay up.
+        for attempt in range(1, CHUNK_ATTEMPTS + 1):
+            try:
+                message = client.read_input_registers(
+                    device_id=self.config["datalogger"]["device_id"],
+                    address=address,
+                    count=count,
+                )
+            except Exception as e:
+                # A broken pipe leaves the client talking to a socket that will never
+                # answer again, so let the container restart instead.
+                if str(e) == "[Errno 32] Broken pipe":
+                    logging.error("Broken pipe talking to the datalogger, restarting")
+                    os._exit(1)
+
+                logging.error(f"Error occured while querying modbus: {e}")
+            else:
+                if not message.isError():
+                    return message.registers
+
+                logging.error(
+                    f"Could not read registers {address} to {address + count} "
+                    f"on attempt {attempt}, might have lost connection"
+                )
+
+            if attempt < CHUNK_ATTEMPTS:
+                sleep(CHUNK_RETRY_DELAY)
+
+        return None
+
     def query_modbus(self):
         logging.info("Querying modbus")
 
@@ -597,49 +638,33 @@ class App:
             self.datalogger_is_offline(offline=False)
 
         registers = {}
-        current_register = self.register_span_start
         chunk_size = self.config["datalogger"]["register_chunks"]
-        queried_registers_counter = 0
+        expected_registers = 0
 
-        # Loop while we still have registers to query
-        while current_register < self.register_span_end:
-            try:
-                logging.info(
-                    f"Querying register {current_register} to {current_register + chunk_size}"
-                )
-                queried_registers_counter += chunk_size
+        for address in range(
+            self.register_span_start, self.register_span_end, chunk_size
+        ):
+            logging.info(f"Querying register {address} to {address + chunk_size}")
 
-                message = client.read_input_registers(
-                    device_id=self.config["datalogger"]["device_id"],
-                    address=current_register,
-                    count=chunk_size,
-                )
+            # Count each chunk once, not once per attempt. Counting per attempt
+            # inflated the expected total to thousands and threw away five complete
+            # 80 register responses on 2026-07-29 alone.
+            expected_registers += chunk_size
 
-                if message.isError():
-                    raise Exception(
-                        "Could not read register, might have lost connection"
-                    )
+            values = self.read_chunk(client, address, chunk_size)
 
-                logging.info(f"Result: {message.registers}")
+            if values is None:
+                # Nothing to gain from asking a datalogger that just refused three
+                # times for the rest of the span, and the length check below will
+                # discard this poll anyway.
+                if not self.datalogger_offline:
+                    self.datalogger_is_offline(offline=True)
+                break
 
-                registry_number = current_register
-                for registry in message.registers:
-                    registers[registry_number] = registry
-                    registry_number += 1
+            logging.info(f"Result: {values}")
+            registers.update(dict(enumerate(values, start=address)))
 
-                current_register += chunk_size
-
-            except Exception as e:
-                logging.error(f"Error occured while querying modbus: {e}")
-
-                if str(e) == "Could not read register, might have lost connection":
-                    if not self.datalogger_offline:
-                        self.datalogger_is_offline(offline=True)
-                elif str(e) == "[Errno 32] Broken pipe":
-                    os._exit(1)
-
-            else:
-                self.datalogger_is_offline(offline=False)
+            self.datalogger_is_offline(offline=False)
 
         client.close()
 
@@ -649,9 +674,10 @@ class App:
         # Sometimes we get a response with almost all values being 0, usually also multiple registers
         # are missing. In that case we just return an empty dictionary. This validation is not perfect
         # but it should be good enough for now.
-        if len(registers) != queried_registers_counter:
+        if len(registers) != expected_registers:
             logging.info(
-                f"Validation of number of queried registers failed. Queried: {len(registers)}, received: {queried_registers_counter}"
+                f"Validation of number of queried registers failed. "
+                f"Queried: {expected_registers}, received: {len(registers)}"
             )
             return {}
 
