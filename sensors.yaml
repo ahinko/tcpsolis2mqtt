@@ -72,7 +72,9 @@
     decimals: 2
   homeassistant:
     device: sensor
-    state_class: total_increasing
+    # A finished day's total, a step function rather than a counter. With a state
+    # class Home Assistant reads every step as energy generated in that hour.
+    state_class:
     device_class: energy
 
 - name: total_dc_output_power
@@ -114,7 +116,8 @@
     scale: 1
   homeassistant:
     device: sensor
-    state_class: total_increasing
+    # A finished month's total, see generation_yesterday.
+    state_class:
     device_class: energy
 
 - name: generation_this_year
@@ -142,7 +145,8 @@
     scale: 1
   homeassistant:
     device: sensor
-    state_class: total_increasing
+    # A finished year's total, see generation_yesterday.
+    state_class:
     device_class: energy
 
 - name: system_datetime
