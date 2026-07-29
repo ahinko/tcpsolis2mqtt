@@ -65,6 +65,23 @@ Prepare a config file. Use `config.example.yaml` and modify it to your needs and
 ### Environment variables
 It's currently only possible to use environment variables to set MQTT user and password. Use `MQTT_USER` and `MQTT_PASSWORD`.
 
+### MQTT topics
+Every sensor is published to `<topic_prefix>/<sensor name>`, retained. On top of that there are three kinds of topic that aren't sensors:
+
+| topic | what it is |
+| --- | --- |
+| `<topic_prefix>/availability` | `online` while the app is running. Set as the MQTT Last Will, so the broker sets it to `offline` if the container dies. Every sensor depends on it. |
+| `<topic_prefix>/datalogger_availability` | `online` while the data logger answers. The voltage, frequency and temperature sensors depend on it, so they go unavailable at night instead of reporting a false 0. |
+| `<topic_prefix>/_state/...` | Retained topics the app uses as its own storage, so a restart doesn't replay a counter reset. Not interesting to Home Assistant. |
+
+When the data logger is unreachable, power and current are published as `0`, because that's true and because a Riemann sum helper integrating `active_power` needs the value to keep arriving. The energy counters are left showing their last value. Everything else goes unavailable.
+
+### Sensor configuration
+`sensors.yaml` describes each register. Two fields drive more than they look like they do:
+
+* `modbus.resets: daily | monthly | yearly` says when the inverter clears the register. Leaving it out means the register is a lifetime counter that may never decrease. It's how the app knows to publish a `0` at midnight rather than wait for an inverter that's asleep, and it requires `device_class: energy` with `state_class: total_increasing`.
+* `homeassistant.state_class` on an energy sensor is either `total_increasing`, meaning a counter whose growth is checked against what the inverter could physically have generated, or empty, meaning a finished period's total that only moves at a rollover. Nothing else is accepted, and the app fails at startup if a sensor claims otherwise.
+
 ### Docker
 `docker run -v "$(pwd)"/config.yaml:/usr/app/src/config.yaml:ro ghcr.io/ahinko/tcpsolis2mqtt:latest`
 
