@@ -32,7 +32,7 @@ def new_day(app, clock, previous_total, day="2026-07-29"):
 
 def test_stale_total_rejected_when_it_arrives_first(make_app, clock, poll):
     # A cloudy day only yields 40 kWh, which is small enough that six hours of
-    # accumulated rate limit allowance would otherwise let it through.
+    # accumulated plausibility allowance would otherwise let it through.
     app = make_app()
     new_day(app, clock, previous_total=40.0)
     clock.advance(6 * 3600)
