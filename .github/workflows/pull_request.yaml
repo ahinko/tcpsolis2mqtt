@@ -4,9 +4,6 @@ on:
   pull_request:
     branches: ["main"]
 
-env:
-  DEFAULT_PYTHON: 3.14.5
-
 jobs:
   python_checks:
     runs-on: ubuntu-latest
@@ -15,10 +12,24 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
-      - name: Set up Python ${{ env.DEFAULT_PYTHON }}
+      # Read from the Dockerfile rather than repeating the version here. Two
+      # copies meant two Renovate dependencies with different constraints: the
+      # Dockerfile could not leave the alpine line it was pinned to, a bare
+      # version had no such limit, and a PR moved one without the other.
+      - name: Read the Python version from the Dockerfile
+        id: python
+        run: |
+          version="$(sed -n 's/^FROM python:\([0-9][0-9.]*\)-.*/\1/p' Dockerfile)"
+          if [ -z "$version" ]; then
+            echo "::error::no Python version found in the Dockerfile FROM line"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python ${{ steps.python.outputs.version }}
         uses: actions/setup-python@v7.0.0
         with:
-          python-version: ${{ env.DEFAULT_PYTHON }}
+          python-version: ${{ steps.python.outputs.version }}
 
       - name: Install requirements
         run: |

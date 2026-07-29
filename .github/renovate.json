@@ -12,31 +12,19 @@
     "@ahinko"
   ],
   "semanticCommits": "enabled",
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "DEFAULT_PYTHON in the workflows tracks the same image the Dockerfile builds on",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
-      ],
-      "matchStrings": [
-        "DEFAULT_PYTHON:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)"
-      ],
-      "datasourceTemplate": "docker",
-      "depNameTemplate": "python",
-      "versioningTemplate": "docker"
-    }
-  ],
   "packageRules": [
     {
-      "description": "One PR for Python, so the Dockerfile and the workflows cannot drift apart. ruff.toml holds the same version as py<major><minor>, which is not a shape Renovate can rewrite, so tests/test_python_version.py fails if it is left behind.",
+      "description": "Python is declared once, in the Dockerfile, and CI reads the version out of it. There is nothing to group with it and no custom manager: two copies meant two dependencies with different constraints, and Renovate moved one without the other. ruff.toml still repeats it as py<major><minor>, which is not a shape Renovate can rewrite, so tests/test_python_version.py fails if that is left behind.",
       "matchDatasources": [
         "docker"
       ],
       "matchPackageNames": [
         "python"
       ],
-      "groupName": "python"
+      "labels": [
+        "renovate/docker",
+        "dependency/python"
+      ]
     },
     {
       "matchDatasources": [
