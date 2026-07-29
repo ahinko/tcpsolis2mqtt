@@ -1,0 +1,31 @@
+# Ruff's default rule set grows with each release, and CI installs ruff unpinned, so
+# a new ruff can turn a green branch red without a line of code changing. That is
+# what happened to the pytest 9 bump: 66 errors, none of them from the pull request,
+# and the run never reached the tests.
+#
+# So say which rules apply rather than inheriting whatever the latest default is.
+# Ruff stays current, and adopting a new rule stays a deliberate decision with its
+# own commit rather than an ambush on an unrelated PR.
+
+# Deliberately not py314, even though the Dockerfile pins 3.14 and so does CI.
+# PEP 758 lets 3.14 write `except TypeError, ValueError:` without parentheses, and
+# with target-version = "py314" the formatter strips them. That is valid 3.14 and
+# ruff is right to do it, but it reads exactly like the Python 2 `except X, e:`
+# idiom, it makes the source unparseable on 3.13, and it is gratuitous churn from a
+# config whose entire point is to stop the tooling changing things by surprise.
+# This setting is a floor, not a compatibility promise: it only stops ruff
+# suggesting things that need something newer.
+target-version = "py313"
+
+[lint]
+# Ruff's historical default: a subset of pycodestyle plus all of Pyflakes.
+#   E4  imports          E7  statements          E9  runtime and IO errors
+#   F   Pyflakes: undefined names, unused imports and variables, f-string bugs
+select = ["E4", "E7", "E9", "F"]
+
+# Worth adopting deliberately at some point, each in its own change:
+#   I     import sorting, auto-fixable
+#   LOG   logging correctness. 42 hits, all of them logging.info on the root logger,
+#         which is the style throughout app/. Would mean a module logger.
+#   BLE   blind excepts. 5 hits, and query_modbus catching bare Exception is load
+#         bearing, so this one needs thought rather than a fix.
