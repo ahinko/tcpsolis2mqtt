@@ -83,6 +83,8 @@ def make_app(sensors_config):
         app.current_day = None
         app.previous_period_total = {}
         app.awaiting_new_period = {}
+        app.settled_value = {}
+        app.pending_value = {}
 
         app.datalogger_offline = False
         app.datalogger_unreachable = True

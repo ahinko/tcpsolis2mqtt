@@ -31,6 +31,11 @@ PERIOD_LENGTH = {"daily": 10, "monthly": 7, "yearly": 4}
 CHUNK_ATTEMPTS = 3
 CHUNK_RETRY_DELAY = 2
 
+# How many polls a finished period's total has to hold a new value before it is
+# believed. A rollover happens once a day at most and then persists, so a value that
+# appears for one poll and vanishes is the datalogger, not the inverter.
+DEBOUNCE_POLLS = 3
+
 # What a reading means once the datalogger stops answering, by what the reading is.
 #
 # A power or a current really is zero, and active_power has to keep arriving: a
@@ -67,6 +72,8 @@ class App:
         self.current_day = None
         self.previous_period_total = {}
         self.awaiting_new_period = {}
+        self.settled_value = {}
+        self.pending_value = {}
 
         if self.config["mqtt"]["enabled"]:
             self.mqtt = Mqtt(self.config["mqtt"])
@@ -148,6 +155,17 @@ class App:
         return (
             homeassistant.get("device_class") == "energy"
             and homeassistant.get("state_class") == "total_increasing"
+        )
+
+    def is_finished_period_total(self, sensor):
+        # Yesterday's, last month's and last year's generation. A step function, not a
+        # counter: it holds one value until the inverter rolls it over. The sensor
+        # schema allows an energy sensor no state class other than total_increasing,
+        # so this and is_counter between them cover every energy register.
+        homeassistant = sensor.get("homeassistant", {})
+
+        return homeassistant.get("device_class") == "energy" and not homeassistant.get(
+            "state_class"
         )
 
     def counters(self):
@@ -534,6 +552,49 @@ class App:
             f"First register: {self.register_span_start}, Last register: {self.register_span_end}"
         )
 
+    def value_is_publishable(self, sensor, value):
+        # An energy register is either a counter, which can be checked against what
+        # the inverter could have generated, or a finished period's total, which can
+        # only be checked against itself. Everything else is published as it arrives.
+        if self.is_counter(sensor):
+            return self.value_is_plausible(sensor, value)
+
+        if self.is_finished_period_total(sensor):
+            return self.value_is_settled(sensor, value)
+
+        return True
+
+    def value_is_settled(self, sensor, value):
+        # A plausibility check is the wrong tool here, the value legitimately jumps by
+        # a whole day's generation once a day. A debounce fits: on 2026-07-28
+        # generation_yesterday read 81 for almost the entire day with four one sample
+        # excursions to the correct 103.2, at roughly 04:40, 09:00, 22:30 and 23:50.
+        # The baseline was wrong and the spikes were right, which is inverted from
+        # generation_today, but either way one sample is not a rollover.
+        #
+        # Nothing is restored across a restart, so the first value of a run takes a
+        # few polls to appear. Home Assistant goes on showing the retained one
+        # meanwhile, which is the same value in all but the case this exists for.
+        name = sensor["name"]
+
+        if value == self.settled_value.get(name):
+            self.pending_value.pop(name, None)
+            return True
+
+        pending, seen = self.pending_value.get(name, (None, 0))
+        seen = seen + 1 if value == pending else 1
+
+        if seen < DEBOUNCE_POLLS:
+            self.pending_value[name] = (value, seen)
+            logging.info(
+                f"Holding {name}: {value} seen {seen} of {DEBOUNCE_POLLS} times"
+            )
+            return False
+
+        self.pending_value.pop(name, None)
+        self.settled_value[name] = value
+        return True
+
     def value_is_plausible(self, sensor, value):
         # A cumulative energy counter cannot climb faster than the inverter is able to
         # generate. The datalogger intermittently serves a value belonging to a previous
@@ -853,9 +914,7 @@ class App:
                     logging.error(f"Error occured {e}")
 
                 else:
-                    if self.is_counter(sensor) and not self.value_is_plausible(
-                        sensor, value
-                    ):
+                    if not self.value_is_publishable(sensor, value):
                         continue
 
                     logging.info("Publishing sensor %s: %s", sensor["name"], value)

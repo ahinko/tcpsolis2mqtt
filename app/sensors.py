@@ -77,6 +77,27 @@ class Sensor(Schema):
             raise ValidationError("Modbus or Http must be defined")
 
     @validates_schema()
+    def an_energy_sensor_is_a_counter_or_a_finished_total(self, data, **kwargs):
+        # An energy register is one of exactly two things, and which one decides how
+        # its value is guarded. A counter, total_increasing, which climbs through the
+        # period and is checked against what the inverter could have generated. Or a
+        # finished period's total, no state class, a step function that is debounced
+        # instead. There is no third kind, and a step function marked total_increasing
+        # makes Home Assistant record every step as energy generated in that hour.
+        homeassistant = data.get("homeassistant", {})
+        state_class = homeassistant.get("state_class")
+
+        if homeassistant.get("device_class") != "energy" or not state_class:
+            return
+
+        if state_class != "total_increasing":
+            raise ValidationError(
+                "an energy sensor is either a counter, state_class: "
+                "total_increasing, or a finished period's total with no state class, "
+                f"not state_class: {state_class}"
+            )
+
+    @validates_schema()
     def resets_requires_a_counter(self, data, **kwargs):
         # The reset and plausibility logic reads the Home Assistant metadata to
         # decide which registers are cumulative counters. Fail at startup rather

@@ -102,3 +102,22 @@ def test_resets_is_accepted_on_a_counter():
 def test_an_unknown_period_is_rejected():
     with pytest.raises(ValidationError):
         Sensor().load(definition(resets="hourly"))
+
+
+def energy_definition(state_class):
+    sensor = definition()
+    sensor["homeassistant"] |= {"device_class": "energy", "state_class": state_class}
+    return sensor
+
+
+@pytest.mark.parametrize("state_class", ["measurement", "total"])
+def test_an_energy_sensor_may_not_claim_any_other_state_class(state_class):
+    # is_counter and is_finished_period_total have to cover every energy register
+    # between them, and a third kind would fall through both.
+    with pytest.raises(ValidationError, match="energy sensor"):
+        Sensor().load(energy_definition(state_class))
+
+
+@pytest.mark.parametrize("state_class", ["total_increasing", None])
+def test_an_energy_sensor_may_be_a_counter_or_a_finished_total(state_class):
+    assert Sensor().load(energy_definition(state_class))
