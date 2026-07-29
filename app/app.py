@@ -310,7 +310,7 @@ class App:
                     f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}"
                 )
             )
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
     def generate_ha_discovery_topics(self):

@@ -7,15 +7,15 @@
 # Ruff stays current, and adopting a new rule stays a deliberate decision with its
 # own commit rather than an ambush on an unrelated PR.
 
-# Deliberately not py314, even though the Dockerfile pins 3.14 and so does CI.
-# PEP 758 lets 3.14 write `except TypeError, ValueError:` without parentheses, and
-# with target-version = "py314" the formatter strips them. That is valid 3.14 and
-# ruff is right to do it, but it reads exactly like the Python 2 `except X, e:`
-# idiom, it makes the source unparseable on 3.13, and it is gratuitous churn from a
-# config whose entire point is to stop the tooling changing things by surprise.
-# This setting is a floor, not a compatibility promise: it only stops ruff
-# suggesting things that need something newer.
-target-version = "py313"
+# Matches the Dockerfile (python:3.14.5-alpine) and CI (3.14.1). The app only ever
+# runs on the version the image ships, so there is nothing to gain from claiming an
+# older floor.
+#
+# One consequence worth knowing before this is lowered again: PEP 758 lets 3.14
+# write `except TypeError, ValueError:` without parentheses, and at py314 the
+# formatter strips them. It is valid 3.14, but it reads like the Python 2
+# `except X, e:` idiom, and it means the source no longer parses on 3.13.
+target-version = "py314"
 
 [lint]
 # Ruff's historical default: a subset of pycodestyle plus all of Pyflakes.
