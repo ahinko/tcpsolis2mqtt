@@ -15,7 +15,7 @@ from datetime import datetime
 
 from environs import Env
 
-from mqtt import Mqtt
+from mqtt import Mqtt, ONLINE, OFFLINE
 from mqtt_discovery import DiscoverMsgSensor, DiscoverMsgBinary
 
 from pymodbus import pymodbus_apply_logging_config
@@ -30,6 +30,26 @@ PERIOD_LENGTH = {"daily": 10, "monthly": 7, "yearly": 4}
 # How hard to try for one chunk of registers before giving up on the whole poll.
 CHUNK_ATTEMPTS = 3
 CHUNK_RETRY_DELAY = 2
+
+# What a reading means once the datalogger stops answering, by what the reading is.
+#
+# A power or a current really is zero, and active_power has to keep arriving: a
+# Riemann sum helper integrates it, and a gap would let the trapezoidal rule bridge
+# the night and invent energy out of the two readings either side.
+#
+# The rest are not zero. Grid voltage does not become 0 V, grid frequency does not
+# become 0 Hz, and the inverter is not at 0 degrees. Nor can they simply stop being
+# published, because Home Assistant keeps showing the last state and its statistics
+# engine treats a held state as current, so a stale 600 V sitting there all night
+# pollutes min/max/mean exactly as badly as a false 0 would. Marking them
+# unavailable is the only thing that excludes the period.
+#
+# DC voltage lands in the unavailable bucket with AC voltage, which loses a little
+# truth since it genuinely is near zero at night. Accepted.
+#
+# Anything else, which is to say the energy counters, is left showing its last value.
+OFFLINE_ZERO = {"power", "current"}
+OFFLINE_UNAVAILABLE = {"voltage", "frequency", "temperature"}
 
 
 class App:
@@ -101,6 +121,21 @@ class App:
 
     def local_date(self):
         return arrow.now("local").format("YYYY-MM-DD")
+
+    def device_class(self, sensor):
+        return sensor.get("homeassistant", {}).get("device_class")
+
+    def availability_topics(self, sensor):
+        # Two topics, because there are two independent failure modes. The app being
+        # alive is the broker's business, via the will. The datalogger being reachable
+        # is this app's, and only the readings that cannot be faked as 0 care about it.
+        prefix = self.config["mqtt"]["topic_prefix"]
+        topics = [f"{prefix}/availability"]
+
+        if self.device_class(sensor) in OFFLINE_UNAVAILABLE:
+            topics.append(f"{prefix}/datalogger_availability")
+
+        return topics
 
     def is_counter(self, sensor):
         # A cumulative energy counter, which is the only kind of reading whose value
@@ -280,6 +315,7 @@ class App:
                                 sensor["unit"],
                                 sensor["homeassistant"]["device_class"],
                                 sensor["homeassistant"]["state_class"],
+                                self.availability_topics(sensor),
                                 self.config["inverter"]["name"],
                                 self.config["inverter"]["model"],
                                 self.config["inverter"]["manufacturer"],
@@ -305,6 +341,7 @@ class App:
                                 sensor["homeassistant"]["payload_off"],
                                 sensor["homeassistant"]["device_class"],
                                 sensor["homeassistant"]["state_class"],
+                                self.availability_topics(sensor),
                                 self.config["inverter"]["name"],
                                 self.config["inverter"]["model"],
                                 self.config["inverter"]["manufacturer"],
@@ -412,17 +449,21 @@ class App:
 
         self.datalogger_offline = offline
 
+        self.publish(
+            f"{self.config['mqtt']['topic_prefix']}/datalogger_availability",
+            OFFLINE if offline else ONLINE,
+            retain=True,
+        )
+
         if self.datalogger_offline:
             logging.info("Datalogger offline")
-            # loop over all measurements and set value to 0 and publish to mqtt
+            # Publish what is genuinely zero. Everything else is either covered by the
+            # availability topic above or, for an energy counter, left alone.
             for sensor in self.sensors_config:
                 if not sensor["active"]:
                     continue
 
-                if (
-                    "homeassistant" in sensor
-                    and sensor["homeassistant"]["state_class"] == "measurement"
-                ):
+                if self.device_class(sensor) in OFFLINE_ZERO:
                     value = 0
                 elif "modbus" in sensor and sensor["modbus"]["read_type"] == "bit":
                     value = sensor["modbus"]["bit"]["default_value"]

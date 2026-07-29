@@ -24,6 +24,7 @@ PORT = 11883
 PREFIX = "tcpsolis2mqtt"
 VALUE_TOPIC = f"{PREFIX}/generation_today"
 LIFETIME_TOPIC = f"{PREFIX}/total_power"
+AVAILABILITY_TOPIC = f"{PREFIX}/availability"
 
 
 @pytest.fixture(scope="session")
@@ -115,6 +116,7 @@ def clean(store):
     for topic in [
         VALUE_TOPIC,
         LIFETIME_TOPIC,
+        AVAILABILITY_TOPIC,
         f"{PREFIX}/_state/current_day",
         f"{PREFIX}/_state/generation_today/previous_total",
         f"{PREFIX}/_state/energy_this_month/previous_total",
@@ -160,6 +162,21 @@ def test_the_connect_callback_fires(broker, mqtt_config, caplog):
     finally:
         client.loop_stop()
         client.disconnect()
+
+
+def test_online_is_announced_on_connect(connect, store, clean):
+    # clean wipes the topic, so anything read back was published by connecting.
+    assert connect().read_retained(AVAILABILITY_TOPIC, timeout=2) == "online"
+
+
+def test_the_will_marks_the_app_offline(connect):
+    # The broker publishes this when the connection drops without a clean disconnect,
+    # which is the only thing that stops a crashed container from looking alive.
+    client = connect()
+
+    assert client._will_topic == AVAILABILITY_TOPIC.encode()
+    assert client._will_payload == b"offline"
+    assert client._will_retain
 
 
 def test_a_deliberate_disconnect_stays_disconnected(broker, mqtt_config, caplog):

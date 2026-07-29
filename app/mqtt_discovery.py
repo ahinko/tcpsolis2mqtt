@@ -13,6 +13,10 @@ class DiscoverMsgSensor:
         "device_class": "",
         "state_class": "",
         "unit_of_measurement": "",
+        # A sensor is only shown when every topic listed here says online, which is
+        # what availability_mode: all means.
+        "availability": [],
+        "availability_mode": "all",
         "device": {
             "name": "",
             "model": "",
@@ -31,6 +35,7 @@ class DiscoverMsgSensor:
         unit,
         device_class,
         state_class,
+        availability_topics,
         device_name,
         device_model,
         device_manufacturer,
@@ -44,6 +49,9 @@ class DiscoverMsgSensor:
         self.discover_msg["device_class"] = device_class
         self.discover_msg["state_class"] = state_class
         self.discover_msg["unit_of_measurement"] = unit
+        self.discover_msg["availability"] = [
+            {"topic": topic} for topic in availability_topics
+        ]
         self.discover_msg["device"]["name"] = device_name
         self.discover_msg["device"]["model"] = device_model
         self.discover_msg["device"]["manufacturer"] = device_manufacturer
@@ -61,6 +69,8 @@ class DiscoverMsgBinary:
         "unique_id": "",
         "payload_on": "",
         "payload_off": "",
+        "availability": [],
+        "availability_mode": "all",
         "device": {
             "name": "",
             "model": "",
@@ -80,6 +90,7 @@ class DiscoverMsgBinary:
         payload_off,
         device_class,
         state_class,
+        availability_topics,
         device_name,
         device_model,
         device_manufacturer,
@@ -94,6 +105,9 @@ class DiscoverMsgBinary:
         self.discover_msg["payload_off"] = payload_off
         self.discover_msg["device_class"] = device_class
         self.discover_msg["state_class"] = state_class
+        self.discover_msg["availability"] = [
+            {"topic": topic} for topic in availability_topics
+        ]
         self.discover_msg["device"]["name"] = device_name
         self.discover_msg["device"]["model"] = device_model
         self.discover_msg["device"]["manufacturer"] = device_manufacturer
