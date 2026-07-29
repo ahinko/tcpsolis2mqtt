@@ -1,4 +1,5 @@
 {
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "enabled": true,
   "timezone": "Europe/Stockholm",
   "dependencyDashboard": true,
@@ -11,7 +12,32 @@
     "@ahinko"
   ],
   "semanticCommits": "enabled",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "DEFAULT_PYTHON in the workflows tracks the same image the Dockerfile builds on",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "DEFAULT_PYTHON:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "python",
+      "versioningTemplate": "docker"
+    }
+  ],
   "packageRules": [
+    {
+      "description": "One PR for Python, so the Dockerfile and the workflows cannot drift apart. ruff.toml holds the same version as py<major><minor>, which is not a shape Renovate can rewrite, so tests/test_python_version.py fails if it is left behind.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "groupName": "python"
+    },
     {
       "matchDatasources": [
         "docker",
