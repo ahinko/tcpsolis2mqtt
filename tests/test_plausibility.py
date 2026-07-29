@@ -6,6 +6,7 @@ is expected to survive. The numbers matter: 103.2 kWh was the real generation on
 after a six hour gap with no successful poll.
 """
 
+import arrow
 import pytest
 
 
@@ -22,10 +23,11 @@ def poll(clock, generation_today):
 
 def new_day(app, clock, previous_total, day="2026-07-29"):
     """Run the midnight reset, having produced `previous_total` the day before."""
+    app.current_day = str(arrow.get(day).shift(days=-1).date())
     app.last_accepted_value["generation_today"] = (previous_total, clock.now)
     app.day = day
     clock.advance(3600)
-    app.reset_daily_counters()
+    app.reset_counters()
 
 
 def test_stale_total_rejected_when_it_arrives_first(make_app, clock, poll):
@@ -148,3 +150,40 @@ def test_first_reading_of_a_run_is_adopted(make_app, clock, poll):
     app = make_app()
 
     assert poll(app, 62.5)
+
+
+def test_a_lifetime_counter_may_not_decrease(make_app, clock, total_power):
+    # total_power has no resets:, so a drop is a fault rather than a reading. It used
+    # to be caught by flagging the register never_zero; now it follows from the
+    # register never being cleared. Accepting the 0 would leave the sensor stuck for
+    # about three months, since climbing back to 39901 needs that much allowance.
+    app = make_app()
+    clock.advance(30)
+    assert app.value_is_plausible(total_power, 39901)
+
+    clock.advance(30)
+    assert not app.value_is_plausible(total_power, 0)
+
+    clock.advance(30)
+    assert app.value_is_plausible(total_power, 39902), "the real reading still lands"
+
+
+def test_a_lifetime_counter_restored_after_a_restart_holds_its_floor(
+    make_app, clock, total_power
+):
+    # load_state seeds the baseline from the retained topic with no timestamp, because
+    # how long the container was down is unknown.
+    app = make_app()
+    app.last_accepted_value["total_power"] = (39901, None)
+
+    clock.advance(30)
+    assert not app.value_is_plausible(total_power, 0)
+
+    clock.advance(30)
+    assert app.value_is_plausible(total_power, 40100), (
+        "a jump that a long outage explains must not be measured against an "
+        "allowance that does not exist"
+    )
+
+    clock.advance(30)
+    assert not app.value_is_plausible(total_power, 41000), "and guarded from then on"

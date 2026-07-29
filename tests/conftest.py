@@ -28,6 +28,16 @@ def energy_this_month(sensors_config):
     return next(s for s in sensors_config if s["name"] == "energy_this_month")
 
 
+@pytest.fixture
+def generation_this_year(sensors_config):
+    return next(s for s in sensors_config if s["name"] == "generation_this_year")
+
+
+@pytest.fixture
+def total_power(sensors_config):
+    return next(s for s in sensors_config if s["name"] == "total_power")
+
+
 class Clock:
     """Stand in for time.monotonic so tests can span days in an instant."""
 
@@ -62,8 +72,8 @@ def make_app(sensors_config):
         app.sensors_config = sensors_config
         app.last_accepted_value = {}
         app.current_day = None
-        app.previous_day_total = {}
-        app.awaiting_new_day = {}
+        app.previous_period_total = {}
+        app.awaiting_new_period = {}
 
         app.day = day
         app.local_date = lambda: app.day

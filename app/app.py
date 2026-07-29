@@ -24,6 +24,9 @@ from pymodbus.exceptions import ModbusException
 
 VERSION = "2.0.0"
 
+# A local date is YYYY-MM-DD, so the period a date belongs to is a prefix of it.
+PERIOD_LENGTH = {"daily": 10, "monthly": 7, "yearly": 4}
+
 
 class App:
     def __init__(self):
@@ -38,8 +41,8 @@ class App:
 
         self.last_accepted_value = {}
         self.current_day = None
-        self.previous_day_total = {}
-        self.awaiting_new_day = {}
+        self.previous_period_total = {}
+        self.awaiting_new_period = {}
 
         if self.config["mqtt"]["enabled"]:
             self.mqtt = Mqtt(self.config["mqtt"])
@@ -95,14 +98,36 @@ class App:
     def local_date(self):
         return arrow.now("local").format("YYYY-MM-DD")
 
-    def daily_sensors(self):
+    def is_counter(self, sensor):
+        # A cumulative energy counter, which is the only kind of reading whose value
+        # can be sanity checked: it can only climb, and only as fast as the inverter
+        # is able to generate. total_increasing in Home Assistant means exactly
+        # "cumulative counter that may reset to zero", so reading it here is honest
+        # rather than a trick, and the sensor schema refuses to let the two drift.
+        homeassistant = sensor.get("homeassistant", {})
+
+        return (
+            homeassistant.get("device_class") == "energy"
+            and homeassistant.get("state_class") == "total_increasing"
+        )
+
+    def counters(self):
         for sensor in self.sensors_config:
-            if (
-                sensor["active"]
-                and "modbus" in sensor
-                and sensor["modbus"]["resets_daily"]
-            ):
+            if sensor["active"] and "modbus" in sensor and self.is_counter(sensor):
                 yield sensor
+
+    def reset_period(self, sensor):
+        # Which period the inverter clears this register on, None for a lifetime
+        # counter that is never cleared.
+        return sensor["modbus"].get("resets")
+
+    def resetting_counters(self):
+        for sensor in self.counters():
+            if self.reset_period(sensor) is not None:
+                yield sensor
+
+    def period_key(self, period, date):
+        return date[: PERIOD_LENGTH[period]]
 
     def state_topic(self, *parts):
         return "/".join(
@@ -125,41 +150,61 @@ class App:
             self.mqtt.read_retained(self.state_topic("current_day"))
             or self.local_date()
         )
-        logging.info(f"Daily counters belong to {self.current_day}")
+        logging.info(f"Counters belong to {self.current_day}")
 
-        for sensor in self.daily_sensors():
-            stored = self.mqtt.read_retained(
-                self.state_topic(sensor["name"], "previous_total")
-            )
+        for sensor in self.counters():
+            name = sensor["name"]
+
+            if self.reset_period(sensor) is None:
+                # A lifetime counter has no reset to recover from, but it must never
+                # be allowed to go backwards, and the value Home Assistant is still
+                # showing is the only record of where it stood before the restart.
+                # The timestamp is left empty on purpose: how long the container was
+                # down is unknown, so there is nothing to measure an increase against.
+                published = self.published_value(sensor)
+
+                if published is not None:
+                    self.last_accepted_value[name] = (published, None)
+                    logging.info(f"{name} stood at {published} before the restart")
+
+                continue
+
+            stored = self.mqtt.read_retained(self.state_topic(name, "previous_total"))
 
             if stored is None:
                 continue
 
-            self.previous_day_total[sensor["name"]] = float(stored)
-            self.awaiting_new_day[sensor["name"]] = True
-            logging.info(f"{sensor['name']} read {stored} before the last reset")
+            self.previous_period_total[name] = float(stored)
+            self.awaiting_new_period[name] = True
+            logging.info(f"{name} read {stored} before the last reset")
 
-    def reset_daily_counters(self):
+    def reset_counters(self):
         # The inverter is asleep at midnight and only clears its own daily counter once
         # it wakes up hours later, until then it keeps reporting yesterday's total.
         # Publish the reset on the wall clock instead so the counter never reports
-        # yesterday's generation as if it happened today.
+        # yesterday's generation as if it happened today. The same holds at a month or
+        # a year boundary, which is why every counter that resets is handled here.
         today = self.local_date()
 
         if self.current_day == today:
             return
 
-        for sensor in self.daily_sensors():
+        for sensor in self.resetting_counters():
+            period = self.reset_period(sensor)
+
+            if not self.period_rolled_over(period, today):
+                continue
+
             name = sensor["name"]
-            logging.info(f"New day, resetting {name}")
+            logging.info(f"New {period} period, resetting {name}")
 
             # Whatever the counter last read is what the inverter keeps reporting until
             # it clears the register itself, so remember it to recognise it on sight.
             previous_total = self.value_before_reset(sensor)
 
             if previous_total is not None:
-                self.previous_day_total[name] = previous_total
-                self.awaiting_new_day[name] = True
+                self.previous_period_total[name] = previous_total
+                self.awaiting_new_period[name] = True
                 self.publish(
                     self.state_topic(name, "previous_total"),
                     previous_total,
@@ -178,20 +223,35 @@ class App:
         self.current_day = today
         self.publish(self.state_topic("current_day"), today, retain=True)
 
+    def period_rolled_over(self, period, today):
+        # Nothing known about where the counters stand, so treat every period as
+        # rolled over rather than leave a stale total in place.
+        if self.current_day is None:
+            return True
+
+        return self.period_key(period, self.current_day) != self.period_key(
+            period, today
+        )
+
     def value_before_reset(self, sensor):
         name = sensor["name"]
 
         if name in self.last_accepted_value:
             return self.last_accepted_value[name][0]
 
+        # Nothing accepted yet this run, so the retained topic still holds the value
+        # Home Assistant is showing, which is the one the reset is about to replace.
+        return self.published_value(sensor)
+
+    def published_value(self, sensor):
         if not self.config["mqtt"]["enabled"]:
             return None
 
-        # Nothing accepted yet this run, so the retained topic still holds the value
-        # Home Assistant is showing, which is the one the reset is about to replace.
         try:
             return float(
-                self.mqtt.read_retained(f"{self.config['mqtt']['topic_prefix']}/{name}")
+                self.mqtt.read_retained(
+                    f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}"
+                )
             )
         except (TypeError, ValueError):
             return None
@@ -440,27 +500,49 @@ class App:
         resolution = sensor["modbus"].get("scale", 1)
 
         # Until the inverter clears its own daily register it keeps reporting yesterday's
-        # total verbatim, and after a night without a single successful poll the rate
-        # limit below has accumulated enough allowance to let that through. Recognise the
-        # value instead. A reading that is not yesterday's total means the inverter has
-        # moved on, so stop looking for it.
-        if self.awaiting_new_day.get(name):
-            if abs(value - self.previous_day_total[name]) <= 2 * resolution:
+        # total verbatim, and after a night without a single successful poll the
+        # allowance below has grown enough to let that through. Recognise the value
+        # instead. A reading that is not yesterday's total means the inverter has moved
+        # on, so stop looking for it.
+        if self.awaiting_new_period.get(name):
+            if abs(value - self.previous_period_total[name]) <= 2 * resolution:
                 logging.warning(
-                    f"Ignoring {name}: {value} is still yesterday's total, "
+                    f"Ignoring {name}: {value} is still the previous period's total, "
                     "the inverter has not reset the register yet"
                 )
                 return False
 
-            self.awaiting_new_day[name] = False
+            self.awaiting_new_period[name] = False
 
         previous = self.last_accepted_value.get(name)
 
-        if previous is None or value <= previous[0]:
+        if previous is None:
             self.last_accepted_value[name] = (value, now)
             return True
 
         last_value, last_time = previous
+
+        if value <= last_value:
+            # A counter that resets is allowed to drop, that is what the reset looks
+            # like. One that never resets is not: a drop there is a fault, and taking
+            # it at face value would strand the sensor, since climbing back to a
+            # lifetime figure needs months of allowance to look possible.
+            if value < last_value and self.reset_period(sensor) is None:
+                logging.error(
+                    f"Ignoring {name}: {last_value} -> {value}, a counter that never "
+                    "resets cannot decrease"
+                )
+                return False
+
+            self.last_accepted_value[name] = (value, now)
+            return True
+
+        if last_time is None:
+            # Restored from the retained topic after a restart, with no idea how long
+            # the container was down, so there is no allowance to measure against.
+            # Adopt the reading and guard every one after it.
+            self.last_accepted_value[name] = (value, now)
+            return True
 
         # The resolution of the register is allowed on top of what the inverter could
         # have generated, otherwise a counter reporting whole kWh could never tick over
@@ -481,30 +563,15 @@ class App:
         return True
 
     def response_is_dead(self, registers):
-        # The datalogger sometimes answers with a complete, well formed block of registers
-        # where every value is zero, usually while the inverter itself is asleep. Sensors
-        # flagged never_zero hold lifetime counters that cannot be zero on a commissioned
-        # inverter, so a zero there means the whole response is bogus.
-        for sensor in self.sensors_config:
-            if (
-                not sensor["active"]
-                or "modbus" not in sensor
-                or not sensor["modbus"]["never_zero"]
-            ):
-                continue
+        # The datalogger sometimes answers with a complete, well formed block of
+        # registers where every single value is zero, usually while the inverter itself
+        # is asleep. A live inverter cannot produce that: AC voltage alone reads about
+        # 2300, and the lifetime counter is in the tens of thousands.
+        if any(registers.values()):
+            return False
 
-            register = sensor["modbus"]["register"]
-            count = 2 if sensor["modbus"]["read_type"] == "long" else 1
-
-            if any(registers.get(register + offset) for offset in range(count)):
-                continue
-
-            logging.info(
-                f"Validation failed, {sensor['description']} (register {register}) is zero"
-            )
-            return True
-
-        return False
+        logging.info("Validation failed, every register in the response is zero")
+        return True
 
     def query_modbus(self):
         logging.info("Querying modbus")
@@ -609,9 +676,9 @@ class App:
         while True:
             logging.debug("Datalogger scan start at " + datetime.now().isoformat())
 
-            # Reset the daily counters on the wall clock, the datalogger is unreachable
+            # Reset the counters on the wall clock, the datalogger is unreachable
             # at midnight so this cannot wait for a successful poll
-            self.reset_daily_counters()
+            self.reset_counters()
 
             ## Query modbus
             registers = self.query_modbus()
@@ -719,7 +786,7 @@ class App:
                     logging.error(f"Error occured {e}")
 
                 else:
-                    if sensor["modbus"]["rate_limited"] and not self.value_is_plausible(
+                    if self.is_counter(sensor) and not self.value_is_plausible(
                         sensor, value
                     ):
                         continue

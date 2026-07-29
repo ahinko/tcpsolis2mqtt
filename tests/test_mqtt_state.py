@@ -8,6 +8,7 @@ an empty topic is only detectable by timing out.
 
 import asyncio
 import threading
+from functools import partial
 
 import pytest
 
@@ -20,6 +21,7 @@ from mqtt import Mqtt  # noqa: E402
 PORT = 11883
 PREFIX = "tcpsolis2mqtt"
 VALUE_TOPIC = f"{PREFIX}/generation_today"
+LIFETIME_TOPIC = f"{PREFIX}/total_power"
 
 
 @pytest.fixture(scope="session")
@@ -110,8 +112,11 @@ def store(connect):
 def clean(store):
     for topic in [
         VALUE_TOPIC,
+        LIFETIME_TOPIC,
         f"{PREFIX}/_state/current_day",
         f"{PREFIX}/_state/generation_today/previous_total",
+        f"{PREFIX}/_state/energy_this_month/previous_total",
+        f"{PREFIX}/_state/generation_this_year/previous_total",
     ]:
         store(topic, None)
 
@@ -122,9 +127,13 @@ def build_app(client, mqtt_config, sensors_config, day):
     app.sensors_config = sensors_config
     app.last_accepted_value = {}
     app.current_day = None
-    app.previous_day_total = {}
-    app.awaiting_new_day = {}
+    app.previous_period_total = {}
+    app.awaiting_new_period = {}
+    # An empty topic is only detectable by timing out and load_state reads up to five
+    # of them, so the default five seconds each dominates the whole suite. One second
+    # is generous against a broker in this same process.
     app.mqtt = client
+    app.mqtt.read_retained = partial(Mqtt.read_retained, client, timeout=1)
     app.local_date = lambda: day
     return app
 
@@ -169,8 +178,8 @@ def test_state_is_restored_after_a_restart(
     app.load_state()
 
     assert app.current_day == "2026-07-29"
-    assert app.previous_day_total["generation_today"] == 40.0
-    assert app.awaiting_new_day["generation_today"] is True
+    assert app.previous_period_total["generation_today"] == 40.0
+    assert app.awaiting_new_period["generation_today"] is True
 
 
 def test_first_ever_start_assumes_today(connect, clean, mqtt_config, sensors_config):
@@ -180,7 +189,7 @@ def test_first_ever_start_assumes_today(connect, clean, mqtt_config, sensors_con
     # Nothing stored, so the reset must not fire against a counter that may already
     # hold generation from earlier today.
     assert app.current_day == "2026-07-29"
-    assert app.previous_day_total == {}
+    assert app.previous_period_total == {}
 
 
 def test_previous_total_falls_back_to_the_published_value(
@@ -193,6 +202,29 @@ def test_previous_total_falls_back_to_the_published_value(
     app = build_app(connect(), mqtt_config, sensors_config, "2026-07-29")
 
     assert app.value_before_reset(generation_today) == 40.0
+
+
+def test_the_lifetime_counter_floor_survives_a_restart(
+    connect, store, clean, mqtt_config, sensors_config
+):
+    # total_power never resets, so nothing lower than what Home Assistant is already
+    # showing may be published over it. Without restoring the floor the first reading
+    # of the run would become the baseline, and a bogus 0 would strand the sensor.
+    store(LIFETIME_TOPIC, "39901")
+
+    app = build_app(connect(), mqtt_config, sensors_config, "2026-07-29")
+    app.load_state()
+
+    assert app.last_accepted_value["total_power"] == (39901.0, None)
+
+
+def test_a_first_ever_start_has_no_lifetime_floor(
+    connect, clean, mqtt_config, sensors_config
+):
+    app = build_app(connect(), mqtt_config, sensors_config, "2026-07-29")
+    app.load_state()
+
+    assert "total_power" not in app.last_accepted_value
 
 
 def test_previous_total_is_none_when_nothing_was_ever_published(

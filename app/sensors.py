@@ -21,9 +21,13 @@ class Modbus(Schema):
     function_code = fields.Int(required=True)
     scale = fields.Float(required=False)
     decimals = fields.Int(required=False)
-    never_zero = fields.Bool(required=False, load_default=False)
-    rate_limited = fields.Bool(required=False, load_default=False)
-    resets_daily = fields.Bool(required=False, load_default=False)
+    # Which period the inverter clears this register on. A statement about the
+    # register, not about what the app should do with it: the wall clock reset and
+    # the stale total guard are derived from it, and its absence means the register
+    # is a lifetime counter that must never decrease.
+    resets = fields.Str(
+        required=False, validate=validate.OneOf(choices=["daily", "monthly", "yearly"])
+    )
     bit = fields.Nested(Bit(), required=False)
 
     @validates_schema()
@@ -71,3 +75,23 @@ class Sensor(Schema):
     def validate_modbus_http(self, data, **kwargs):
         if "modbus" not in data and "http" not in data:
             raise ValidationError("Modbus or Http must be defined")
+
+    @validates_schema()
+    def resets_requires_a_counter(self, data, **kwargs):
+        # The reset and plausibility logic reads the Home Assistant metadata to
+        # decide which registers are cumulative counters. Fail at startup rather
+        # than let the two descriptions of the same register drift apart.
+        if "modbus" not in data or "resets" not in data["modbus"]:
+            return
+
+        homeassistant = data.get("homeassistant", {})
+
+        if (
+            homeassistant.get("device_class") != "energy"
+            or homeassistant.get("state_class") != "total_increasing"
+        ):
+            raise ValidationError(
+                "modbus.resets only applies to an energy counter, so it requires "
+                "homeassistant.device_class: energy and "
+                "homeassistant.state_class: total_increasing"
+            )

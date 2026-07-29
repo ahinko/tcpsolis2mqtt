@@ -9,6 +9,10 @@ as energy generated in that hour, which is where roughly 89 kWh of phantom
 generation came from on 2026-07-28.
 """
 
+import pytest
+from marshmallow import ValidationError
+from sensors import Sensor
+
 COUNTERS = {
     "total_power",
     "generation_today",
@@ -51,3 +55,50 @@ def test_every_energy_sensor_is_one_or_the_other(sensors_config):
     assert {sensor["name"] for sensor in energy_sensors(sensors_config)} == (
         COUNTERS | FINISHED_PERIODS
     )
+
+
+def test_every_resetting_counter_says_which_period(sensors_config):
+    resets = {
+        sensor["name"]: sensor["modbus"].get("resets")
+        for sensor in sensors_config
+        if "modbus" in sensor and sensor["name"] in COUNTERS
+    }
+
+    assert resets == {
+        "total_power": None,
+        "generation_today": "daily",
+        "energy_this_month": "monthly",
+        "generation_this_year": "yearly",
+    }
+
+
+def definition(**modbus):
+    return {
+        "name": "made_up",
+        "description": "Made up",
+        "modbus": {"register": 3014, "read_type": "register", "function_code": 4}
+        | modbus,
+        "homeassistant": {"device": "sensor"},
+    }
+
+
+def test_resets_is_rejected_without_a_state_class():
+    # The behaviour is derived from the Home Assistant metadata, so the two
+    # descriptions of the same register are not allowed to drift apart.
+    with pytest.raises(ValidationError, match="modbus.resets"):
+        Sensor().load(definition(resets="daily"))
+
+
+def test_resets_is_accepted_on_a_counter():
+    sensor = definition(resets="daily")
+    sensor["homeassistant"] |= {
+        "device_class": "energy",
+        "state_class": "total_increasing",
+    }
+
+    assert Sensor().load(sensor)["modbus"]["resets"] == "daily"
+
+
+def test_an_unknown_period_is_rejected():
+    with pytest.raises(ValidationError):
+        Sensor().load(definition(resets="hourly"))
