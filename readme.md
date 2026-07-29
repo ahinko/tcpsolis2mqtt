@@ -88,6 +88,9 @@ Every sensor is published to `<topic_prefix>/<sensor name>`, retained. On top of
 
 When the data logger is unreachable, power and current are published as `0`, because that's true and because a Riemann sum helper integrating `active_power` needs the value to keep arriving. The energy counters are left showing their last value. Everything else goes unavailable.
 
+### Why the energy readings are guarded
+Energy registers aren't published as they arrive. The data logger intermittently serves a value belonging to a previous day, which Home Assistant records as real generation, so a morning could show over 100 kWh of production that never happened. What each register is checked against, and the measurements behind every decision, are in [docs/energy-guards.md](docs/energy-guards.md). Worth reading before changing anything under `app/` or the energy entries in `sensors.yaml`.
+
 ### Sensor configuration
 `sensors.yaml` describes each register. Two fields drive more than they look like they do:
 

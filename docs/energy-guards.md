@@ -1,11 +1,9 @@
-# TODO
+# Why the energy readings are guarded
 
-Work on the morning energy spike. The code is done and unverified in production.
-This file is written so it can be picked up cold, without the conversation that
-produced it.
-
-**What is left: clean the existing Home Assistant statistics, and watch a few real
-mornings.** Everything else below is background on what was built and why.
+The energy registers are not published as they arrive. Each one is checked first,
+and what the check is depends on what the register is. This is the record of why,
+because none of it is guessable from the code and all of it was measured rather
+than assumed.
 
 ## The problem
 
@@ -32,12 +30,11 @@ damaging event is the rise off a low value, not the drop.**
 Two things had to be true for it to happen: the inverter kept reporting
 yesterday's total after midnight, and something lower was published before it.
 
-## How it works now
+The statistics this corrupted before the guards existed are being left alone. It
+had been happening for over a year by the time it was diagnosed, and rewriting a
+year of hourly sums by hand is worse than living with it.
 
-Nine commits are in. Every register is described once, by what it is, and the
-behaviour follows from that description.
-
-### What a register is
+## What a register is
 
 ```yaml
 # generation_today
@@ -47,6 +44,9 @@ homeassistant:
   device_class: energy
   state_class: total_increasing
 ```
+
+Every behaviour is derived from that description rather than configured
+separately:
 
 | behaviour | derived from |
 | --- | --- |
@@ -71,7 +71,9 @@ unguarded.
 Only `generation_today`, `energy_this_month` and `generation_this_year` carry
 `resets:`. `total_power` is a lifetime counter and deliberately has none.
 
-### The guards, all in `app/app.py`
+## The guards
+
+All in `app/app.py`.
 
 - `reset_counters()` publishes `0` when the local date crosses the boundary a
   register resets on. It runs at the top of the poll loop rather than after a
@@ -80,7 +82,8 @@ Only `generation_today`, `energy_this_month` and `generation_this_year` carry
   both prefixes of it.
 - `value_is_plausible()`, for counters, holds three checks:
   - the **plausibility check**, rejecting any increase larger than
-    `max_power_kw x elapsed x 1.2 + register resolution`.
+    `max_power_kw x elapsed x 1.2 + register resolution`. It is a plausibility
+    check, not a rate limit: a rate limit means throttling requests.
   - the **stale total guard**, which remembers the previous period's final value
     at the reset and rejects a reading equal to it (within twice the resolution).
     It disarms on the first reading that is not that value.
@@ -111,7 +114,24 @@ gap. There are no successful polls between roughly 22:47 and 04:49, so by
 morning the plausibility allowance has grown to about 87 kWh. That is enough to
 catch the observed 103.2 but not a cloudy day's 40 kWh.
 
-### Availability
+### Why the finished totals are debounced instead
+
+On 2026-07-28 `generation_yesterday` (register 3015) read 81 for almost the whole
+day with four one sample excursions to the correct 103.2, at roughly 04:40, 09:00,
+22:30 and 23:50. The baseline was the wrong value and the spikes were right, which
+is inverted from `generation_today`. On 2026-07-29 it read 98.8 all morning,
+correctly, so it does not happen every day.
+
+A plausibility check is wrong here, since the value legitimately jumps by a whole
+day's generation once a day. One sample is not a rollover, though; a real one
+persists.
+
+While those three sensors still had `state_class: total_increasing`, each
+`81 -> 103.2` excursion was recorded as +22.2 kWh of real growth, about 89 kWh of
+phantom energy on 2026-07-28 alone. Removing the state class stopped the damage.
+The debounce is the cosmetic half.
+
+## Availability
 
 Two topics, because there are two independent failure modes:
 
@@ -125,8 +145,7 @@ Two topics, because there are two independent failure modes:
 
 Sensors that need both list both, with `availability_mode: all`.
 
-What gets published when the datalogger is unreachable now comes from
-`device_class`:
+What gets published when the datalogger is unreachable comes from `device_class`:
 
 | device_class | when the datalogger is unreachable |
 | --- | --- |
@@ -147,82 +166,21 @@ DC voltage lands in the unavailable bucket with AC voltage, losing a little trut
 since it genuinely is near zero at night. Accepted, there is a separate device
 reading the real energy meter.
 
-## Environment
+## Environment this was measured on
 
-- Inverter **S5-GR3P15K, 15 kW**. `max_power_kw: 15` under `inverter:` in config,
-  defaulting to 15 if absent. This is a nameplate rating, not a tuning knob.
+- Inverter **S5-GR3P15K, 15 kW**. `max_power_kw` is required in config since
+  3.0.0. It is a nameplate rating, not a tuning knob.
 - Datalogger S2-WL-ST, on wifi, reachable only while the inverter is awake.
 - Production runs `poll_interval: 30` and `poll_retries: 20`. The `config.yaml`
-  in this repo says `poll_retries: 3`, so **the local file does not match what is
-  deployed**. With 20 retries at 30 seconds the offline debounce is about ten
-  minutes, which is why brief dropouts never reach Home Assistant.
+  in this repo is a development config and does not match: it runs
+  `poll_retries: 3` with MQTT disabled, so a local run cannot double publish. With
+  20 retries at 30 seconds the offline debounce is about ten minutes, which is why
+  brief dropouts never reach Home Assistant.
 - The inverter's own clock runs about **42 minutes slow** but advances correctly
   and ran continuously across the night. It is not a staleness signal.
 - At dawn the inverter starts and stops several times before it is
   self sustaining. On 2026-07-29 there were five online to offline transitions
   between 05:30 and 05:43.
-- Logs: `kubectl logs -n home-automation deploy/tcpsolis2mqtt`.
-- **The user does not run `main` until we agree it is stable.** Nothing here is
-  live yet.
-
-## What is left
-
-1. **Watch a few real mornings.** Nothing here has run against the inverter. The
-   thing to look for is `Ignoring generation_today` in the logs on a morning that
-   was actually fine.
-2. **Clean the existing statistics.** Home Assistant Developer Tools ->
-   Statistics, adjust the affected hours. Roughly 103 kWh on 2026-07-28 from
-   `generation_today`, plus about 89 kWh the same day from `generation_yesterday`
-   (four excursions of +22.2 kWh). Do this last, once nothing new is being
-   written.
-3. **Home Assistant will keep the old statistics for the three sensors that lost
-   their state class.** Removing `state_class` stops new sum statistics being
-   generated but does not retract what is already recorded, which is what step 2
-   is for.
-
-## Fixed
-
-- `128dd01` reject dead all zero register responses
-- `2804180` reject implausible jumps in the daily generation counter
-- `721797c` reset the daily counter on the wall clock at midnight
-- `e60c062` recognise yesterday's total when the inverter has not reset yet
-- `13dbf86` drop the state class from the finished period totals
-- `3013074` state when a register resets, derive the rest
-- `78dd3b3` stop the retry loop spinning, and count each chunk once
-- `bab5eaf` availability topics, and offline values that are true
-- `f185426` debounce the finished period totals
-
-### The bugs in `78dd3b3`, for the record
-
-- **Hot retry loop in `query_modbus()`.** A chunk that raised was retried without
-  advancing and without sleeping, so the loop spun as fast as the network allowed.
-  Retries per poll cycle on the morning of 2026-07-29: 73, 433, 447, 405, 473.
-  Roughly two requests per second sustained for minutes, 1828 failed reads over
-  thirteen hours, all concentrated in the 05:30-05:45 window when the datalogger
-  was already struggling to stay up. Now three attempts two seconds apart, then
-  the poll is abandoned.
-- **Complete responses were discarded.** `queried_registers_counter += chunk_size`
-  ran on every attempt including retries, so the validation compared 80 received
-  registers against an inflated 5840. Five complete 80 register responses were
-  thrown away on 2026-07-29 for this reason alone. It also meant
-  `response_is_dead()` was rarely reached during a flapping period, because the
-  length check rejected first.
-- **The validation log message had its labels swapped.**
-- **`poll_retries` was off by one**, allowing N+1 attempts.
-- **The MQTT reconnect loop.** This one was recorded here as "MQTT callbacks never
-  fire" and that was **wrong**, in a way worth keeping written down. The reasoning
-  was that `Mqtt` defines methods named `on_connect` and `on_disconnect` which
-  shadow paho's property descriptors, so `self.on_connect = self.on_connect` sets
-  a plain instance attribute, the property setter never runs, and `_on_connect`
-  stays `None`. All of that is true and `_on_connect` really is `None`. But paho
-  reads the *public* attribute when it dispatches (`client.py:3906`,
-  `on_connect = self.on_connect`), not the private one, so the shadowed methods
-  fired all along. Which means the manual reconnect loop in `on_disconnect` was
-  not dead code: it ran on paho's own network thread and undid deliberate
-  disconnects, logging "MQTT Disconnected", then "MQTT Reconnecting in 1
-  seconds", then "MQTT Reconnected successfully!". `loop_start()` already
-  reconnects, so the loop is gone and the handlers are named `_handle_connect` and
-  `_handle_disconnect`. `tests/test_mqtt_state.py` pins both.
 
 ## Approaches already rejected
 
@@ -230,7 +188,7 @@ Do not re-propose these without new evidence.
 
 - **Cross checking `generation_today` against `total_power`.** Today's figure
   should equal how far the lifetime counter moved since the day started.
-  Rejected: it chains one suspect register onto another, and `total_power` has
+  Rejected: it chains one suspect register onto another, and `total_power` had
   only been observed as reliable for about a week. If it ever glitched the check
   would silently reject *valid* data.
 - **An absolute ceiling of `15 kW x hours since midnight`.** Rejected: at 04:35
@@ -253,7 +211,7 @@ Do not re-propose these without new evidence.
   legitimately jumps by a whole day's generation once a day. A debounce fits the
   actual failure, which is one sample wide.
 
-## How to verify a change
+## Verifying a change
 
 ```sh
 python3 -m pip install -r requirements.txt
@@ -264,14 +222,13 @@ python3 -m pytest tests -q
 Two separate installs on purpose. `amqtt` pins `pyyaml==6.0.2` and
 `requirements.txt` asks for `6.0.3`, so a single `pip install -r ... -r ...`
 fails to resolve. Installing in sequence lets the dev requirement win, which is
-what CI does. Worth fixing properly at some point.
+what CI does.
 
-84 tests, about 40 seconds. Most need no broker, they build an `App` with MQTT
-disabled and record publishes. `tests/test_mqtt_state.py` runs a real in-process
-`amqtt` broker, because what is being relied on is broker behaviour: retained
-delivery on subscribe, empty topics only detectable by timeout, and the will. It
-uses QoS 1 so a wait means the broker acknowledged rather than that bytes reached
-the socket.
+Most tests need no broker; they build an `App` with MQTT disabled and record
+publishes. `tests/test_mqtt_state.py` runs a real in-process `amqtt` broker,
+because what is being relied on is broker behaviour: retained delivery on
+subscribe, empty topics only detectable by timeout, and the will. It uses QoS 1 so
+a wait means the broker acknowledged rather than that bytes reached the socket.
 
 `tests/test_plausibility.py` carries the real scenarios and the real numbers.
 Keep it that way, they are the regression surface.
@@ -299,7 +256,7 @@ run, and two more for `generation_yesterday` when it genuinely rolled over from
 reset fired once, for `generation_today`, at the one midnight in the window.
 
 That window does not contain the 2026-07-28 anomaly itself, because the container
-had restarted since and `kubectl logs -p` has nothing. That trace is encoded in
+had restarted since and `kubectl logs -p` had nothing. That trace is encoded in
 `tests/test_plausibility.py::test_observed_sunrise_trace` with its real numbers.
 
 ## Known residual risks
@@ -316,3 +273,59 @@ had restarted since and `kubectl logs -p` has nothing. That trace is encoded in
 - The debounce is not restored across a restart, so a finished period total takes
   three polls to appear after one. Home Assistant shows the retained value
   meanwhile, which is the same value except in the case the debounce exists for.
+
+## A misdiagnosis worth keeping
+
+The MQTT reconnect loop was recorded for a while as "MQTT callbacks never fire",
+and that was wrong in a way worth remembering.
+
+The reasoning was that `Mqtt` defined methods named `on_connect` and
+`on_disconnect` which shadow paho's property descriptors, so
+`self.on_connect = self.on_connect` set a plain instance attribute, the property
+setter never ran, and `_on_connect` stayed `None`. All of that is true, and
+`_on_connect` really was `None`.
+
+But paho dispatches off the *public* attribute (`client.py:3906`,
+`on_connect = self.on_connect`), not the private one, so the shadowed methods
+fired all along. Which means the manual reconnect loop in `on_disconnect` was not
+dead code: it ran on paho's own network thread and undid deliberate disconnects,
+logging "MQTT Disconnected", then "MQTT Reconnecting in 1 seconds", then "MQTT
+Reconnected successfully!".
+
+`loop_start()` already reconnects, so the loop is gone and the handlers are named
+`_handle_connect` and `_handle_disconnect`. `tests/test_mqtt_state.py` pins both
+the connect callback and that a deliberate disconnect stays disconnected.
+
+The lesson is narrow but real: reading the library's dispatch site would have
+settled it in a minute, and reasoning about descriptor shadowing did not.
+
+## History
+
+- `128dd01` reject dead all zero register responses
+- `2804180` reject implausible jumps in the daily generation counter
+- `721797c` reset the daily counter on the wall clock at midnight
+- `e60c062` recognise yesterday's total when the inverter has not reset yet
+- `13dbf86` drop the state class from the finished period totals
+- `3013074` state when a register resets, derive the rest
+- `78dd3b3` stop the retry loop spinning, and count each chunk once
+- `bab5eaf` availability topics, and offline values that are true
+- `f185426` debounce the finished period totals
+- `a3c155a` require `inverter.max_power_kw`, released as 3.0.0
+
+### The bugs in `78dd3b3`
+
+- **Hot retry loop in `query_modbus()`.** A chunk that raised was retried without
+  advancing and without sleeping, so the loop spun as fast as the network allowed.
+  Retries per poll cycle on the morning of 2026-07-29: 73, 433, 447, 405, 473.
+  Roughly two requests per second sustained for minutes, 1828 failed reads over
+  thirteen hours, all concentrated in the 05:30-05:45 window when the datalogger
+  was already struggling to stay up. Now three attempts two seconds apart, then
+  the poll is abandoned.
+- **Complete responses were discarded.** `queried_registers_counter += chunk_size`
+  ran on every attempt including retries, so the validation compared 80 received
+  registers against an inflated 5840. Five complete 80 register responses were
+  thrown away on 2026-07-29 for this reason alone. It also meant
+  `response_is_dead()` was rarely reached during a flapping period, because the
+  length check rejected first.
+- **The validation log message had its labels swapped.**
+- **`poll_retries` was off by one**, allowing N+1 attempts.
