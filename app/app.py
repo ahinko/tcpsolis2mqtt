@@ -56,6 +56,24 @@ DEBOUNCE_POLLS = 3
 OFFLINE_ZERO = {"power", "current"}
 OFFLINE_UNAVAILABLE = {"voltage", "frequency", "temperature"}
 
+# What the datalogger pads a CGI field with. Captured 2026-08-15: both inverter.cgi
+# and moniter.cgi answer with a fixed 1313 byte buffer holding 33 NUL bytes, then the
+# semicolon separated fields, then NUL again to the end of the buffer. So the first
+# field of a response carries 33 leading NULs and the last one is nothing but padding.
+#
+# The inverter serial arrived that way, 49 characters of which 33 were NUL. It was the
+# only topic affected because inverter_serial is the only sensor in sensors.yaml
+# mapped to field 0 of either response, while its sibling datalogger_serial is
+# moniter.cgi field 2 and came through as a clean 16 characters. An http sensor has no
+# length or field count to get wrong, so there is nothing in the register map to
+# correct here. Removing the padding is the decode.
+#
+# It cannot be left to a consumer. Home Assistant stores the payload verbatim as the
+# sensor state and its recorder then INSERTs it into Postgres, which refuses a NUL in
+# a text column. That fails the flush and poisons the session, so every other row
+# queued in the same commit is discarded along with it.
+HTTP_PADDING = "\x00 \t\r\n\v\f"
+
 
 class App:
     def __init__(self):
@@ -406,8 +424,12 @@ class App:
             logging.error("HTTP endpoints did not return 200")
             return
 
-        ir_registers = ir.text.split(";")
-        mr_registers = mr.text.split(";")
+        # The sensor schema allows no endpoint other than these two, so every sensor
+        # below finds its response here.
+        registers = {
+            "inverter": ir.text.split(";"),
+            "moniter": mr.text.split(";"),
+        }
 
         for sensor in self.sensors_config:
             if (
@@ -418,29 +440,51 @@ class App:
             ):
                 continue
 
-            value = None
+            endpoint = sensor["http"]["endpoint"]
+            register = sensor["http"]["register"]
+            value = self.http_value(registers[endpoint], endpoint, register)
 
-            if (
-                sensor["http"]["endpoint"] == "inverter"
-                and ir_registers[sensor["http"]["register"]]
-            ):
-                value = ir_registers[sensor["http"]["register"]]
-            elif (
-                sensor["http"]["endpoint"] == "moniter"
-                and mr_registers[sensor["http"]["register"]]
-            ):
-                value = mr_registers[sensor["http"]["register"]]
-
-            if value:
-                value = value.strip()
-                logging.info(
-                    f"{sensor['http']['register']} {sensor['description']} : {value}"
-                )
+            if value is not None:
+                logging.info(f"{register} {sensor['description']} : {value}")
                 self.publish(
                     f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
                     value,
                     retain=True,
                 )
+
+    def http_value(self, registers, endpoint, register):
+        # One field of a CGI response, or None if it does not carry a usable value.
+        #
+        # An http register is a position in a semicolon separated response, and the
+        # only description of that response is sensors.yaml. A field the datalogger
+        # does not send is therefore a missing reading, not a crash: indexing straight
+        # into the list raised an IndexError that escaped query_http, query_modbus and
+        # main, and took the process down with it.
+        if register >= len(registers):
+            logging.error(
+                f"{endpoint}.cgi returned {len(registers)} fields, so there is no "
+                f"register {register}"
+            )
+            return None
+
+        value = registers[register].strip(HTTP_PADDING)
+
+        if not value:
+            return None
+
+        # Padding at either end is expected and has just been removed. Anything else
+        # unprintable means the field is not the string it is described as, and this
+        # is the one path that puts device supplied text into a payload -- a modbus
+        # reading is a number, or a status string that came from sensors.yaml. Refuse
+        # it loudly rather than publish something a recorder cannot store.
+        if any(character < " " for character in value):
+            logging.error(
+                f"Ignoring {endpoint}.cgi register {register}: {value!r} still holds "
+                "a control character after the padding was stripped"
+            )
+            return None
+
+        return value
 
     def datalogger_is_offline(self, *, offline: bool):
         # Check if new state if offline
