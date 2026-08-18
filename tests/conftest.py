@@ -73,6 +73,8 @@ def make_app(sensors_config):
                 "host": "192.0.2.1",
                 "port": 502,
                 "device_id": 1,
+                "poll_interval": 30,
+                "poll_interval_if_off": 600,
                 "poll_retries": poll_retries,
                 "register_chunks": register_chunks,
                 "http": {"enabled": False},
