@@ -63,7 +63,12 @@ def query(make_app, clock, monkeypatch):
         client = StubClient(*answers)
         app = make_app()
         app.get_register_interval()
-        monkeypatch.setattr(app_module, "ModbusTcpClient", lambda *a, **kw: client)
+
+        def build(*args, **kwargs):
+            app.client_kwargs = kwargs
+            return client
+
+        monkeypatch.setattr(app_module, "ModbusTcpClient", build)
         return app, client, app.query_modbus()
 
     return _query
@@ -125,3 +130,28 @@ def test_an_all_zero_response_is_discarded(query):
     app, client, registers = query(Response([0] * SPAN))
 
     assert registers == {}
+
+
+def test_the_client_is_not_allowed_its_own_retry_loop(query):
+    # pymodbus runs `while count_retries <= retries`, so its default of 3 is four
+    # attempts per request. Multiplied by CHUNK_ATTEMPTS that is twelve requests for
+    # one chunk, each waiting the full timeout, and neither constant in this file
+    # says so. read_chunk does the retrying; the client does exactly one attempt.
+    app, _, _ = query()
+
+    assert app.client_kwargs["retries"] == 0
+
+
+def test_the_client_waits_the_timeout_this_module_declares(query):
+    app, _, _ = query()
+
+    assert app.client_kwargs["timeout"] == app_module.MODBUS_TIMEOUT
+
+
+def test_the_client_is_not_given_a_setting_that_does_nothing(query):
+    # reconnect_delay was passed for years. The pymodbus docs are explicit that it is
+    # not used by the sync client, and the client was rebuilt every poll anyway, so
+    # it only ever read as though reconnection were handled somewhere.
+    app, _, _ = query()
+
+    assert "reconnect_delay" not in app.client_kwargs
