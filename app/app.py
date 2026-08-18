@@ -74,6 +74,21 @@ OFFLINE_UNAVAILABLE = {"voltage", "frequency", "temperature"}
 # queued in the same commit is discarded along with it.
 HTTP_PADDING = "\x00 \t\r\n\v\f"
 
+# Seconds to wait for the datalogger's CGIs: to answer the connection, then for each
+# block of the body. requests has no default, so without this a datalogger that
+# completes the handshake and then says nothing blocks the poll loop forever.
+#
+# Nothing notices that. Mqtt.loop_start runs paho's network thread, so the broker
+# keeps seeing a live session and the Last Will never fires. Home Assistant sees an
+# app that is up and has simply stopped publishing, and every sensor holds the value
+# it had at the moment we hung -- which is the stale reading docs/energy-guards.md
+# exists to prevent.
+#
+# query_http only runs on the transition back to online, which is the moment the
+# datalogger is least likely to be fully awake and most likely to accept a connection
+# it cannot answer.
+HTTP_TIMEOUT = (5, 10)
+
 
 class App:
     def __init__(self):
@@ -406,6 +421,7 @@ class App:
                     self.config["datalogger"]["http"]["user"],
                     self.config["datalogger"]["http"]["password"],
                 ),
+                timeout=HTTP_TIMEOUT,
             )
 
             mr_url = f"http://{self.config['datalogger']['host']}/moniter.cgi"
@@ -415,6 +431,7 @@ class App:
                     self.config["datalogger"]["http"]["user"],
                     self.config["datalogger"]["http"]["password"],
                 ),
+                timeout=HTTP_TIMEOUT,
             )
         except Exception as e:
             logging.error(f"Unable to poll HTTP endpoints {e}")
