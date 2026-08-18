@@ -879,6 +879,25 @@ class App:
     def pick_from_registers(self, registers, start, count):
         return [registers[i] for i in range(start, start + count)]
 
+    def seconds_until_next_poll(self, started):
+        # The interval is the gap between the starts of two polls, not the gap
+        # between the end of one and the start of the next. Sleeping the whole
+        # interval after the work added the length of the poll to every cycle, which
+        # is a second or two normally and much more when a chunk had to be retried:
+        # the poll that gave up on the datalogger took longer than the interval it
+        # was then followed by.
+        #
+        # A poll that overran its own interval is not made up for, it just starts the
+        # next one immediately. Measuring from the start each time means a slow poll
+        # cannot leave a debt behind for the ones after it.
+        interval = (
+            self.config["datalogger"]["poll_interval"]
+            if not self.datalogger_offline
+            else self.config["datalogger"]["poll_interval_if_off"]
+        )
+
+        return max(0, interval - (monotonic() - started))
+
     def main(self):
         # Generate Home assistant MQTT discovery topics
         self.generate_ha_discovery_topics()
@@ -891,6 +910,7 @@ class App:
 
         while True:
             logging.debug("Datalogger scan start at " + datetime.now().isoformat())
+            poll_started = monotonic()
 
             # Reset the counters on the wall clock, the datalogger is unreachable
             # at midnight so this cannot wait for a successful poll
@@ -1013,12 +1033,10 @@ class App:
                         retain=True,
                     )
 
-            # wait with next poll configured interval, or if datalogger is not responding ten times the interval
-            sleep_duration = (
-                self.config["datalogger"]["poll_interval"]
-                if not self.datalogger_offline
-                else self.config["datalogger"]["poll_interval_if_off"]
-            )
+            # Wait until the next poll is due, which is the configured interval after
+            # this one started, or the longer interval if the datalogger is not
+            # answering.
+            sleep_duration = self.seconds_until_next_poll(poll_started)
 
             logging.debug(f"Datalogger scanning paused for {sleep_duration} seconds")
             sleep(sleep_duration)
