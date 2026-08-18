@@ -28,8 +28,21 @@ VERSION = "3.0.0"
 PERIOD_LENGTH = {"daily": 10, "monthly": 7, "yearly": 4}
 
 # How hard to try for one chunk of registers before giving up on the whole poll.
+#
+# These two describe the whole retry budget only because the client is built with
+# retries=0. pymodbus runs its own loop, `while count_retries <= retries`, so its
+# stock default of 3 is four attempts per request and multiplies with this one: a
+# chunk that never answered cost 3 x 4 x MODBUS_TIMEOUT, a little over two minutes,
+# against a poll_interval most people set to 30 or 60.
+# The numbers here have to be the only ones that count, or they are not a budget.
 CHUNK_ATTEMPTS = 3
 CHUNK_RETRY_DELAY = 2
+
+# Seconds to wait for one request to the datalogger. Deliberately left where it has
+# always been: how patient we are with a single answer is the one number here that can
+# turn a poll that used to succeed into one that fails, and it wants measuring against
+# the hardware rather than guessing.
+MODBUS_TIMEOUT = 10
 
 # How many polls a finished period's total has to hold a new value before it is
 # believed. A rollover happens once a day at most and then persists, so a value that
@@ -784,8 +797,9 @@ class App:
             client = ModbusTcpClient(
                 self.config["datalogger"]["host"],
                 port=self.config["datalogger"]["port"],
-                reconnect_delay=10,
-                timeout=10,
+                timeout=MODBUS_TIMEOUT,
+                # One attempt per request. read_chunk owns the retrying.
+                retries=0,
             )
 
             if not client.connect():
