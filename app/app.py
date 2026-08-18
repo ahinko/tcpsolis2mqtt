@@ -79,6 +79,10 @@ class App:
     def __init__(self):
         self.datalogger_offline = False
         self.datalogger_unreachable = True
+        # What was last put on the availability topic, so the same answer is not sent
+        # again. None until the first poll decides, which is what makes that first
+        # publish happen whichever way it goes.
+        self.availability_published = None
         self.init_config()
         self.load_sensors_config()
         self.retries_done = 0
@@ -511,11 +515,20 @@ class App:
 
         self.datalogger_offline = offline
 
-        self.publish(
-            f"{self.config['mqtt']['topic_prefix']}/datalogger_availability",
-            OFFLINE if offline else ONLINE,
-            retain=True,
-        )
+        # Only when it changed. A successful poll asserts this once for the connection
+        # and again for every chunk of registers it reads, so the topic was being
+        # rewritten with the answer it already held several thousand times a day. The
+        # message is retained, so saying it once is saying it for good.
+        availability = OFFLINE if offline else ONLINE
+
+        if availability != self.availability_published:
+            self.availability_published = availability
+
+            self.publish(
+                f"{self.config['mqtt']['topic_prefix']}/datalogger_availability",
+                availability,
+                retain=True,
+            )
 
         if self.datalogger_offline:
             logging.info("Datalogger offline")

@@ -88,6 +88,7 @@ def make_app(sensors_config):
 
         app.datalogger_offline = False
         app.datalogger_unreachable = True
+        app.availability_published = None
         app.retries_done = 0
         app.register_span_start = 0
         app.register_span_end = 0

@@ -143,3 +143,59 @@ def test_active_power_does_not_depend_on_the_datalogger(make_app, sensors_config
     active_power = next(s for s in sensors_config if s["name"] == "active_power")
 
     assert app.availability_topics(active_power) == ["tcpsolis2mqtt/availability"]
+
+
+def availability_publishes(app):
+    return [
+        payload for topic, payload in app.published if topic == DATALOGGER_AVAILABILITY
+    ]
+
+
+def test_online_is_published_once_however_often_the_poll_asserts_it(make_app):
+    # A successful poll says so once for the connection and again for every chunk of
+    # registers it reads, so at the default chunk size this topic was rewritten with
+    # the answer it already held twice a poll, a few thousand times a day.
+    app = make_app()
+
+    for _ in range(5):
+        app.datalogger_is_offline(offline=False)
+
+    assert availability_publishes(app) == ["online"]
+
+
+def test_the_first_answer_is_always_published(make_app):
+    # Retained, so Home Assistant needs it on the topic once and then never again
+    # until it changes. Nothing has been said at startup, which is what the None
+    # starting value is for.
+    app = make_app()
+    app.retries_done = app.config["datalogger"]["poll_retries"]
+
+    app.datalogger_is_offline(offline=True)
+
+    assert availability_publishes(app) == ["offline"]
+
+
+def test_a_change_is_still_published(make_app):
+    app = make_app()
+    retries = app.config["datalogger"]["poll_retries"]
+
+    app.datalogger_is_offline(offline=False)
+    app.datalogger_is_offline(offline=False)
+
+    # Going offline is not believed until the retries are used up, and coming online
+    # above reset that counter, so it takes poll_retries + 1 of these before the
+    # datalogger is declared offline at all.
+    for _ in range(retries + 1):
+        app.datalogger_is_offline(offline=True)
+
+    app.datalogger_is_offline(offline=False)
+
+    assert availability_publishes(app) == ["online", "offline", "online"]
+
+
+def test_going_offline_still_publishes_what_is_genuinely_zero(offline):
+    # The zeros are not gated by the change check above, and must not be: they go to
+    # the sensor topics, not the availability one.
+    app = offline()
+
+    assert published(app)["active_power"] == 0
