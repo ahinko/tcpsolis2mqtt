@@ -13,7 +13,10 @@ import pytest
 
 import app as app_module
 
-SPAN = 80
+# The registers sensors.yaml actually asks for: 3004 to 3077 inclusive. This used to
+# be 80, the chunk size, because whole chunks were read whatever the span was.
+SPAN = 74
+FIRST, LAST = 3004, 3077
 
 
 class Response:
@@ -52,7 +55,7 @@ class StubClient:
         return answer
 
 
-def live_response(address=3004, count=SPAN):
+def live_response(address=FIRST, count=SPAN):
     # Register 3041 is the inverter temperature, the only thing that has to be non
     # zero for the response not to count as dead.
     return Response([250 if address + i == 3041 else 0 for i in range(count)])
@@ -256,3 +259,32 @@ def test_a_refused_read_does_not_drop_the_socket(query):
     app, client, registers = query(Response(error=True), live_response())
 
     assert client.closes == 1, "only the close at the end of the poll"
+
+
+def test_only_the_registers_that_are_wanted_are_asked_for(query):
+    # Whole chunks were read regardless of the span, so the default chunk size asked
+    # for six registers past the end of anything sensors.yaml maps.
+    app, client, registers = query(live_response())
+
+    assert client.reads == [(FIRST, SPAN)]
+    assert max(registers) == LAST
+
+
+def test_a_chunk_size_that_lands_on_the_end_still_reads_the_last_register(
+    make_app, clock, monkeypatch
+):
+    # The bug the range bound hid. With the span 3004 to 3077, a register_chunks of 73
+    # read 3004 to 3076 and stopped: the length check passed, because 73 were asked
+    # for and 73 arrived, so the poll was kept and only the sensor needing 3077
+    # failed, as a KeyError logged once a poll forever.
+    app = make_app(register_chunks=73)
+    app.get_register_interval()
+
+    client = StubClient(live_response(count=73), live_response(address=3077, count=1))
+    monkeypatch.setattr(app_module, "ModbusTcpClient", lambda *a, **kw: client)
+
+    registers = app.query_modbus()
+
+    assert client.reads == [(FIRST, 73), (LAST, 1)]
+    assert LAST in registers
+    assert len(registers) == SPAN

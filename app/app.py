@@ -912,17 +912,31 @@ class App:
         chunk_size = self.config["datalogger"]["register_chunks"]
         expected_registers = 0
 
+        # register_span_end is the last register wanted, not one past it, so the range
+        # has to reach it. It did not, and a chunk size that happened to land exactly
+        # on the end silently lost that register: with the span 3004 to 3077 a
+        # register_chunks of 73 read 3004 to 3076 and stopped. The length check below
+        # passed, because 73 were asked for and 73 arrived, so the poll was kept and
+        # only the sensor needing the missing register failed -- as a KeyError caught
+        # up in main, logged once a poll, forever.
+        #
+        # The count is clamped for the same reason the range moved. Reading whole
+        # chunks past the end covered that bug by accident, six registers past 3077 at
+        # the default chunk size, and asking a datalogger this fragile for registers
+        # nothing is mapped to is not a habit worth keeping.
         for address in range(
-            self.register_span_start, self.register_span_end, chunk_size
+            self.register_span_start, self.register_span_end + 1, chunk_size
         ):
-            logging.info(f"Querying register {address} to {address + chunk_size}")
+            count = min(chunk_size, self.register_span_end - address + 1)
+
+            logging.info(f"Querying register {address} to {address + count - 1}")
 
             # Count each chunk once, not once per attempt. Counting per attempt
             # inflated the expected total to thousands and threw away five complete
             # 80 register responses on 2026-07-29 alone.
-            expected_registers += chunk_size
+            expected_registers += count
 
-            values = self.read_chunk(client, address, chunk_size)
+            values = self.read_chunk(client, address, count)
 
             if values is None:
                 # Nothing to gain from asking a datalogger that just refused three
@@ -938,9 +952,6 @@ class App:
             self.datalogger_is_offline(offline=False)
 
         client.close()
-
-        if client.connected:
-            logging.error("Client still connected to datalogger")
 
         # Sometimes we get a response with almost all values being 0, usually also multiple registers
         # are missing. In that case we just return an empty dictionary. This validation is not perfect
