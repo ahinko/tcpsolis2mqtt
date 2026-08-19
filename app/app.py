@@ -613,6 +613,13 @@ class App:
         if availability != self.availability_published:
             self.availability_published = availability
 
+            # The transition, both ways. Going offline was logged further down;
+            # coming back was not logged at all, so the only record of it was paho's
+            # own debug line for the publish. That made the one state change worth
+            # watching visible only to whoever had set debug on and knew to look for
+            # a client library's output, which is no way to audit a state machine.
+            logging.info(f"Datalogger {availability}")
+
             self.publish(
                 f"{self.config['mqtt']['topic_prefix']}/datalogger_availability",
                 availability,
@@ -620,7 +627,6 @@ class App:
             )
 
         if self.datalogger_offline:
-            logging.info("Datalogger offline")
             # Publish what is genuinely zero. Everything else is either covered by the
             # availability topic above or, for an energy counter, left alone.
             for sensor in self.sensors_config:
