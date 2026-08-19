@@ -166,6 +166,40 @@ DC voltage lands in the unavailable bucket with AC voltage, losing a little trut
 since it genuinely is near zero at night. Accepted, there is a separate device
 reading the real energy meter.
 
+### Why `poll_retries` is 20, and why a good poll resets the count
+
+`poll_retries` is the offline debounce: that many consecutive failed polls before
+`datalogger_availability` flips. At `poll_interval: 30` that is about ten minutes.
+It is tuned to this site and is not a default to copy without thinking.
+
+The two failures it has to serve are not the same shape.
+
+**Dusk is continuous.** The inverter stays up until it loses power and then
+essentially never comes back the same evening. Failures arrive one after another,
+the count climbs cleanly and the datalogger is declared offline once. Observed
+2026-08-18: `done 0 of 20` through `done 19 of 20` without a single interruption,
+then offline, then the night.
+
+**Dawn is interrupted.** The inverter starts and stops several times before it is
+self sustaining. Observed 2026-08-19: six failed polls, one success at 05:35:52,
+six more failed polls, then up for good from 05:39:22.
+
+A successful poll resets the count to zero, and that is the mechanism rather than
+an oversight. The first reading of the morning says the inverter is on its way up,
+and the flapping after it is expected to stop within minutes. Holding
+`datalogger_availability` at online across that is the wanted behaviour. The
+alternative is Home Assistant marking half a dozen sensors unavailable and back
+again several times, every morning of the year, in exchange for describing a state
+that is about to end anyway.
+
+It still fires in the morning if the failures stop being interrupted. A datalogger
+that comes up briefly and then genuinely dies produces twenty-one unbroken failures
+and is declared offline after about ten minutes, so being wrong is bounded rather
+than open ended.
+
+The obvious refinements are all worse. See the rejected list below before touching
+this.
+
 ## Environment this was measured on
 
 - Inverter **S5-GR3P15K, 15 kW**. `max_power_kw` is required in config since
@@ -175,7 +209,8 @@ reading the real energy meter.
   in this repo is a development config and does not match: it runs
   `poll_retries: 3` with MQTT disabled, so a local run cannot double publish. With
   20 retries at 30 seconds the offline debounce is about ten minutes, which is why
-  brief dropouts never reach Home Assistant.
+  brief dropouts never reach Home Assistant. Why that number, and why a successful
+  poll resets the count, is under Availability above.
 - The inverter's own clock runs about **42 minutes slow** but advances correctly
   and ran continuously across the night. It is not a staleness signal.
 - At dawn the inverter starts and stops several times before it is
@@ -207,6 +242,28 @@ Do not re-propose these without new evidence.
   `current`: Home Assistant treats a held state as current, so it pollutes
   statistics just as badly. The answer for everything else is `unavailable`, not
   silence.
+- **Lowering `poll_retries` so the availability topic tracks the datalogger more
+  closely.** Rejected on the numbers. At `poll_retries: 5` the morning of 2026-08-19
+  would have been declared offline at 05:35:27, and `poll_interval_if_off` is 600, so
+  nothing would have been asked again until 05:45:27. The datalogger was back at
+  05:35:52 and healthy for good from 05:39:22. That trades an availability topic
+  which was wrong for six and a half minutes, about voltages that were roughly right
+  anyway at a time of day when power is near zero, for ten minutes of real data lost
+  at the start of the generation day.
+- **A progressive backoff after going offline**, starting at `poll_interval` and
+  growing towards `poll_interval_if_off`, so a morning flap is retried quickly while
+  a winter night still settles at ten minutes. Rejected because there is nothing here
+  for it to fix. Offline is declared at dusk, where recovery does not matter until
+  morning, and during power outages, which happen once or twice a year, take the
+  inverter and therefore the datalogger with them, and are long rather than
+  intermittent. The only cost it removes is that sunrise can go unnoticed for up to
+  ten minutes after the night's backoff, and generation in the first ten minutes of a
+  browning out inverter is nil.
+- **Treating a mid-day dropout as an energy risk.** The argument was that holding the
+  last `active_power` for ten minutes lets the Riemann sum bridge the gap and invent
+  energy. It does not apply here: the datalogger is powered by the inverter, so an
+  outage takes both, and usually the broker and Home Assistant with them. Once or
+  twice a year, well under a kWh, against annual generation in the thousands.
 - **A plausibility check on `generation_yesterday`.** Rejected: the value
   legitimately jumps by a whole day's generation once a day. A debounce fits the
   actual failure, which is one sample wide.
