@@ -31,12 +31,15 @@ class StubClient:
     def __init__(self, *answers):
         self.answers = list(answers)
         self.reads = []
+        self.closes = 0
         self.connected = True
 
     def connect(self):
+        self.connected = True
         return True
 
     def close(self):
+        self.closes += 1
         self.connected = False
 
     def read_input_registers(self, device_id, address, count):
@@ -221,3 +224,35 @@ def test_reads_that_start_working_again_clear_the_count(polls):
 
     assert app.retries_done == 0
     assert not app.datalogger_offline
+
+
+def test_a_broken_pipe_is_recovered_from_instead_of_killing_the_process(query):
+    # This used to be os._exit(1): kill the container and start again, losing the
+    # plausibility timestamps and the debounce counts with it. The path could not even
+    # be tested, because the exit would have taken the test runner down too.
+    app, client, registers = query(OSError("[Errno 32] Broken pipe"), live_response())
+
+    assert len(registers) == SPAN
+    assert len(client.reads) == 2, "retried, and the retry worked"
+
+
+def test_a_raised_error_drops_the_socket_so_the_next_attempt_redials(query):
+    # pymodbus connect() returns true whenever it still holds a socket object,
+    # without testing whether anything answers on it. Without the close, every later
+    # request goes into the same dead socket.
+    #
+    # A reset rather than a broken pipe, so this case can be run against the old
+    # behaviour. A broken pipe there called os._exit and would take the test runner
+    # with it, which is the other half of why that path was never covered.
+    app, client, registers = query(OSError("Connection reset by peer"), live_response())
+
+    assert client.closes == 2, "once for the dead socket, once at the end of the poll"
+
+
+def test_a_refused_read_does_not_drop_the_socket(query):
+    # An isError response is the datalogger declining to answer, which is what it
+    # does every morning while the inverter wakes up. The connection is fine, and
+    # reconnecting on each of those would be churn for nothing.
+    app, client, registers = query(Response(error=True), live_response())
+
+    assert client.closes == 1, "only the close at the end of the poll"

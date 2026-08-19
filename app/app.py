@@ -4,7 +4,6 @@ import yaml
 import logging
 import arrow
 import requests
-import os
 
 from typing import Any
 from config import AppConfig
@@ -842,13 +841,25 @@ class App:
                     count=count,
                 )
             except Exception as e:
-                # A broken pipe leaves the client talking to a socket that will never
-                # answer again, so let the container restart instead.
-                if str(e) == "[Errno 32] Broken pipe":
-                    logging.error("Broken pipe talking to the datalogger, restarting")
-                    os._exit(1)
-
+                # The socket cannot be trusted after this, and pymodbus will not
+                # notice: its connect() returns true whenever it still holds a socket
+                # object, without testing whether anything is at the other end. So a
+                # broken pipe left every later request writing into the same dead
+                # socket, which is why this used to kill the process and let the
+                # container restart.
+                #
+                # close() drops the socket, and the attempt after this one dials a
+                # new connection. The poll can then still succeed, where a restart
+                # lost it along with the in-memory half of the energy guards: the
+                # plausibility timestamps and the debounce counts are not in the
+                # retained topics load_state reads back.
+                #
+                # Only for a raised error. A response that says isError is the
+                # datalogger declining to answer, not a dead socket -- that is what
+                # it does every morning while the inverter wakes up, and reconnecting
+                # each time would be pure churn.
                 logging.error(f"Error occured while querying modbus: {e}")
+                client.close()
             else:
                 if not message.isError():
                     return message.registers
