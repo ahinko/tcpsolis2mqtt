@@ -5,7 +5,7 @@ import logging
 import arrow
 import requests
 
-from typing import Any
+from typing import Any, Callable, NamedTuple
 from config import AppConfig
 from sensors import Sensor
 
@@ -102,6 +102,17 @@ HTTP_PADDING = "\x00 \t\r\n\v\f"
 HTTP_TIMEOUT = (5, 10)
 
 
+class ReadType(NamedTuple):
+    """One kind of modbus reading: how wide it is, and how to turn it into a value."""
+
+    # How many registers the reading spans. The span polled each cycle is derived from
+    # this, so a read type that claims fewer registers than it uses truncates the poll.
+    width: int
+    # Takes the App, the sensor and the registers the reading spans; returns the value
+    # to publish, or None if this reading cannot be made from them.
+    decode: Callable[["App", dict[str, Any], list[int]], Any]
+
+
 class App:
     def __init__(self):
         self.datalogger_offline = False
@@ -178,7 +189,7 @@ class App:
     def local_date(self):
         return arrow.now("local").format("YYYY-MM-DD")
 
-    def device_class(self, sensor):
+    def device_class(self, sensor: dict[str, Any]) -> str | None:
         return sensor.get("homeassistant", {}).get("device_class")
 
     def availability_topics(self, sensor):
@@ -579,83 +590,110 @@ class App:
         )
         return True
 
-    def datalogger_is_offline(self, *, offline: bool):
-        # Check if new state if offline
-        if offline:
-            # Set in unreachable state before offline
-            self.datalogger_unreachable = True
+    def datalogger_is_offline(self, *, offline: bool) -> None:
+        # The state machine and nothing else: spend a retry, notice a return, record
+        # the state, say so, and stand in for the readings that are gone. Each of
+        # those is its own method below. They were one 61 line block called from the
+        # middle of the register loop, and that mixture is what let a poll which
+        # failed every chunk still leave the availability topic saying online.
+        if offline and self.retry_before_declaring_offline():
+            return
 
-            # Check if retries are done
-            if self.retries_done < self.config["datalogger"]["poll_retries"]:
-                logging.info(
-                    f"Datalogger not reachable, done {self.retries_done} of {self.config['datalogger']['poll_retries']} retries"
-                )
-                self.retries_done += 1
-                return
-
-        # Check if data logger was offline and now came back online
-        if (self.datalogger_offline or self.datalogger_unreachable) and not offline:
-            # Came online
-            self.query_http()
-            # Reset retry counter
-            self.retries_done = 0
-            # Reset unreachable flag
-            self.datalogger_unreachable = False
+        if not offline:
+            self.datalogger_came_back()
 
         self.datalogger_offline = offline
 
+        self.publish_availability(OFFLINE if offline else ONLINE)
+
+        if offline:
+            self.publish_offline_values()
+
+    def retry_before_declaring_offline(self) -> bool:
+        # One poll the datalogger did not answer is not an offline datalogger,
+        # poll_retries of them is. True while the budget lasts, and the caller then
+        # leaves the state exactly as it was.
+        self.datalogger_unreachable = True
+
+        if self.retries_done >= self.config["datalogger"]["poll_retries"]:
+            return False
+
+        logging.info(
+            f"Datalogger not reachable, done {self.retries_done} of "
+            f"{self.config['datalogger']['poll_retries']} retries"
+        )
+        self.retries_done += 1
+        return True
+
+    def datalogger_came_back(self) -> None:
+        # Only on the transition, and unreachable counts as away: the retry budget
+        # is spent before anything is declared, so a datalogger that dropped out and
+        # returned within it never reached the offline state but was gone all the
+        # same. The CGI values are read here because no register carries them.
+        if not (self.datalogger_offline or self.datalogger_unreachable):
+            return
+
+        self.query_http()
+        self.retries_done = 0
+        self.datalogger_unreachable = False
+
+    def publish_availability(self, availability: str) -> None:
         # Only when it changed. A successful poll asserts this once for the connection
         # and again for every chunk of registers it reads, so the topic was being
         # rewritten with the answer it already held several thousand times a day. The
         # message is retained, so saying it once is saying it for good.
-        availability = OFFLINE if offline else ONLINE
+        if availability == self.availability_published:
+            return
 
-        if availability != self.availability_published:
-            self.availability_published = availability
+        self.availability_published = availability
 
-            # The transition, both ways. Going offline was logged further down;
-            # coming back was not logged at all, so the only record of it was paho's
-            # own debug line for the publish. That made the one state change worth
-            # watching visible only to whoever had set debug on and knew to look for
-            # a client library's output, which is no way to audit a state machine.
-            logging.info(f"Datalogger {availability}")
+        # The transition, both ways. Going offline was logged further down; coming
+        # back was not logged at all, so the only record of it was paho's own debug
+        # line for the publish. That made the one state change worth watching visible
+        # only to whoever had set debug on and knew to look for a client library's
+        # output, which is no way to audit a state machine.
+        logging.info(f"Datalogger {availability}")
+
+        self.publish(
+            f"{self.config['mqtt']['topic_prefix']}/datalogger_availability",
+            availability,
+            retain=True,
+        )
+
+    def offline_value(self, sensor: dict[str, Any]) -> Any:
+        # What one sensor should read while the datalogger is away, or None to leave
+        # it showing what it last had. Everything not answered here is either covered
+        # by the availability topic or, for an energy counter, deliberately untouched.
+        if self.device_class(sensor) in OFFLINE_ZERO:
+            return 0
+
+        if "modbus" in sensor and sensor["modbus"]["read_type"] == "bit":
+            return sensor["modbus"]["bit"]["default_value"]
+
+        return None
+
+    def publish_offline_values(self) -> None:
+        for sensor in self.sensors_config:
+            if not sensor["active"]:
+                continue
+
+            value = self.offline_value(sensor)
+
+            if value is None:
+                continue
+
+            source = sensor["modbus"] if "modbus" in sensor else sensor["http"]
+            logging.info(f"{source['register']} {sensor['description']} : {value}")
 
             self.publish(
-                f"{self.config['mqtt']['topic_prefix']}/datalogger_availability",
-                availability,
+                f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
+                value,
                 retain=True,
             )
 
-        if self.datalogger_offline:
-            # Publish what is genuinely zero. Everything else is either covered by the
-            # availability topic above or, for an energy counter, left alone.
-            for sensor in self.sensors_config:
-                if not sensor["active"]:
-                    continue
-
-                if self.device_class(sensor) in OFFLINE_ZERO:
-                    value = 0
-                elif "modbus" in sensor and sensor["modbus"]["read_type"] == "bit":
-                    value = sensor["modbus"]["bit"]["default_value"]
-                else:
-                    continue
-
-                if "modbus" in sensor:
-                    logging.info(
-                        f"{sensor['modbus']['register']} {sensor['description']} : {value}"
-                    )
-                else:
-                    logging.info(
-                        f"{sensor['http']['register']} {sensor['description']} : {value}"
-                    )
-
-                self.publish(
-                    f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
-                    value,
-                    retain=True,
-                )
-
-    def map_bit_to_value(self, mapping, default_value, binary_string):
+    def map_bit_to_value(
+        self, mapping: dict[int, str], default_value: str, binary_string: str
+    ) -> str:
         # Remove '0b' prefix if present
         if binary_string.startswith("0b"):
             binary_string = binary_string[2:]
@@ -672,7 +710,7 @@ class App:
         else:
             return default_value
 
-    def get_register_interval(self):
+    def get_register_interval(self) -> None:
         # Check if we already have a first and last register
         if self.register_span_start > 0 and self.register_span_end > 0:
             return
@@ -682,23 +720,18 @@ class App:
             if not sensor["active"] or "modbus" not in sensor:
                 continue
 
-            if (
-                self.register_span_start == 0
-                or sensor["modbus"]["register"] < self.register_span_start
-            ):
-                self.register_span_start = sensor["modbus"]["register"]
+            register = sensor["modbus"]["register"]
 
-            if sensor["modbus"]["register"] > self.register_span_end:
-                additional = 0
+            if self.register_span_start == 0 or register < self.register_span_start:
+                self.register_span_start = register
 
-                if sensor["modbus"]["read_type"] == "long":
-                    additional = 1
-                elif sensor["modbus"]["read_type"] == "composed_datetime":
-                    additional = 5
-                elif sensor["modbus"]["read_type"] == "alarm":
-                    additional = 3
+            if register > self.register_span_end:
+                # The last register of the reading, not its first. The widths live in
+                # READ_TYPES, where the decoder that consumes them is, so the span
+                # cannot fall behind a read type the loop already knows how to read.
+                width = READ_TYPES[sensor["modbus"]["read_type"]].width
 
-                self.register_span_end = sensor["modbus"]["register"] + additional
+                self.register_span_end = register + width - 1
 
         logging.info(
             f"First register: {self.register_span_start}, Last register: {self.register_span_end}"
@@ -820,7 +853,7 @@ class App:
         self.last_accepted_value[name] = (value, now)
         return True
 
-    def response_is_dead(self, registers):
+    def response_is_dead(self, registers: dict[int, int]) -> bool:
         # The datalogger sometimes answers with a complete, well formed block of
         # registers where every single value is zero, usually while the inverter itself
         # is asleep. A live inverter cannot produce that: AC voltage alone reads about
@@ -831,7 +864,9 @@ class App:
         logging.info("Validation failed, every register in the response is zero")
         return True
 
-    def read_chunk(self, client, address, count):
+    def read_chunk(
+        self, client: ModbusTcpClient, address: int, count: int
+    ) -> list[int] | None:
         # One chunk of registers, or None if the datalogger would not give it up.
         # Bounded attempts with a pause between them: the loop this replaces never
         # advanced and never slept, so a chunk that kept failing was retried as fast
@@ -880,9 +915,8 @@ class App:
 
         return None
 
-    def query_modbus(self):
-        logging.info("Querying modbus")
-
+    def connect_to_datalogger(self) -> ModbusTcpClient | None:
+        # A connected client, or None with the datalogger already told it is offline.
         try:
             client = ModbusTcpClient(
                 self.config["datalogger"]["host"],
@@ -899,7 +933,7 @@ class App:
             logging.error(f"Unable to connect to datalogger: {e}")
             if not self.datalogger_offline:
                 self.datalogger_is_offline(offline=True)
-            return
+            return None
 
         # A connection that opens says nothing about whether there is a working
         # datalogger behind it, so nothing is declared here. Every morning while the
@@ -912,9 +946,14 @@ class App:
         # Assistant holding the voltages and the frequency from before it started.
         #
         # The first chunk of registers that actually arrives is what says we are
-        # online, further down the loop below.
+        # online, in read_span below.
+        return client
 
-        registers = {}
+    def read_span(self, client: ModbusTcpClient) -> tuple[dict[int, int], int]:
+        # The whole register span, chunk by chunk, with the number of registers that
+        # were asked for. The two together are what the caller judges the poll on: a
+        # short answer is a failed poll, however well formed each chunk was.
+        registers: dict[int, int] = {}
         chunk_size = self.config["datalogger"]["register_chunks"]
         expected_registers = 0
 
@@ -946,8 +985,8 @@ class App:
 
             if values is None:
                 # Nothing to gain from asking a datalogger that just refused three
-                # times for the rest of the span, and the length check below will
-                # discard this poll anyway.
+                # times for the rest of the span, and the length check on the way out
+                # will discard this poll anyway.
                 if not self.datalogger_offline:
                     self.datalogger_is_offline(offline=True)
                 break
@@ -956,6 +995,18 @@ class App:
             registers.update(dict(enumerate(values, start=address)))
 
             self.datalogger_is_offline(offline=False)
+
+        return registers, expected_registers
+
+    def query_modbus(self) -> dict[int, int]:
+        logging.info("Querying modbus")
+
+        client = self.connect_to_datalogger()
+
+        if client is None:
+            return {}
+
+        registers, expected_registers = self.read_span(client)
 
         client.close()
 
@@ -974,10 +1025,12 @@ class App:
 
         return registers
 
-    def pick_from_registers(self, registers, start, count):
+    def pick_from_registers(
+        self, registers: dict[int, int], start: int, count: int
+    ) -> list[int]:
         return [registers[i] for i in range(start, start + count)]
 
-    def seconds_until_next_poll(self, started):
+    def seconds_until_next_poll(self, started: float) -> float:
         # The interval is the gap between the starts of two polls, not the gap
         # between the end of one and the start of the next. Sleeping the whole
         # interval after the work added the length of the poll to every cycle, which
@@ -996,7 +1049,110 @@ class App:
 
         return max(0, interval - (monotonic() - started))
 
-    def main(self):
+    def decode_register(self, sensor: dict[str, Any], values: list[int]) -> Any:
+        value = values[0]
+
+        if "scale" in sensor["modbus"]:
+            value = float(value) * sensor["modbus"]["scale"]
+
+            if "decimals" in sensor["modbus"]:
+                value = round(value, sensor["modbus"]["decimals"])
+
+        return value
+
+    def decode_long(self, sensor: dict[str, Any], values: list[int]) -> Any:
+        return ModbusTcpClient.convert_from_registers(
+            values,
+            data_type=ModbusTcpClient.DATATYPE.INT32,
+        )
+
+    def decode_composed_datetime(
+        self, sensor: dict[str, Any], values: list[int]
+    ) -> Any:
+        # The inverter's own clock, six registers of two digit numbers. Nothing is
+        # derived from it: docs/energy-guards.md records why it cannot be trusted to
+        # say which day a reading belongs to.
+        return (
+            f"20{values[0]:02d}-{values[1]:02d}-{values[2]:02d}"
+            f"T{values[3]:02d}:{values[4]:02d}:{values[5]:02d}{self.timezone_offset}"
+        )
+
+    def decode_alarm(self, sensor: dict[str, Any], values: list[int]) -> Any:
+        return "ON" if any(values) else "OFF"
+
+    def decode_bit(self, sensor: dict[str, Any], values: list[int]) -> Any:
+        value = values[0]
+
+        if "bit" not in sensor["modbus"] or "map" not in sensor["modbus"]["bit"]:
+            logging.error("Could not find needed modbus.bit.map config")
+            return None
+
+        return self.map_bit_to_value(
+            sensor["modbus"]["bit"]["map"],
+            sensor["modbus"]["bit"]["default_value"],
+            bin(value),
+        )
+
+    def decode_sensor(self, sensor: dict[str, Any], registers: dict[int, int]) -> Any:
+        # One sensor's reading out of the registers this poll returned, or None if it
+        # could not be made. This whole chain used to sit inline in the poll loop, so
+        # a decode could not be exercised without running a poll, and a new read type
+        # meant another branch in the middle of it.
+        try:
+            # Verify that we have the register needed
+            if sensor["modbus"]["register"] not in registers:
+                raise Exception(f"Register {sensor['modbus']['register']} not found")
+
+            read_type = READ_TYPES.get(sensor["modbus"]["read_type"])
+
+            if read_type is None:
+                logging.error(
+                    f"modbus.readtype of {sensor['modbus']['read_type']} not supported"
+                )
+                return None
+
+            values = self.pick_from_registers(
+                registers,
+                sensor["modbus"]["register"],
+                read_type.width,
+            )
+
+            return read_type.decode(self, sensor, values)
+
+        except Exception as e:
+            logging.error(f"Error occured {e}")
+            return None
+
+    def publish_readings(self, registers: dict[int, int]) -> None:
+        for sensor in self.sensors_config:
+            # Check if sensor is active and has a modbus read type
+            if (
+                not sensor["active"]
+                or "modbus" not in sensor
+                or "read_type" not in sensor["modbus"]
+            ):
+                continue
+
+            value = self.decode_sensor(sensor, registers)
+
+            # None is not a reading. Nothing publishable decodes to it, so it is free
+            # to mean "this one could not be read", which is what the log lines in
+            # decode_sensor have already said.
+            if value is None:
+                continue
+
+            if not self.value_is_publishable(sensor, value):
+                continue
+
+            logging.info("Publishing sensor %s: %s", sensor["name"], value)
+
+            self.publish(
+                f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
+                value,
+                retain=True,
+            )
+
+    def main(self) -> None:
         # Generate Home assistant MQTT discovery topics
         self.generate_ha_discovery_topics()
 
@@ -1014,122 +1170,13 @@ class App:
             # at midnight so this cannot wait for a successful poll
             self.reset_counters()
 
-            ## Query modbus
             registers = self.query_modbus()
 
-            for sensor in self.sensors_config:
-                # Check if sensor is active and has a modbus read type, also check if the datalogger is online
-                if (
-                    not sensor["active"]
-                    or "modbus" not in sensor
-                    or "read_type" not in sensor["modbus"]
-                    or not registers
-                ):
-                    continue
-
-                try:
-                    # Verify that we have the register needed
-                    if sensor["modbus"]["register"] not in registers:
-                        raise Exception(
-                            f"Register {sensor['modbus']['register']} not found"
-                        )
-
-                    if sensor["modbus"]["read_type"] == "register":
-                        # Get value
-                        values = self.pick_from_registers(
-                            registers,
-                            sensor["modbus"]["register"],
-                            1,
-                        )
-
-                        value = values[0]
-
-                        # Transform value
-                        if "scale" in sensor["modbus"]:
-                            value = float(value) * sensor["modbus"]["scale"]
-
-                            if "decimals" in sensor["modbus"]:
-                                value = round(value, sensor["modbus"]["decimals"])
-
-                    elif sensor["modbus"]["read_type"] == "long":
-                        values = self.pick_from_registers(
-                            registers,
-                            sensor["modbus"]["register"],
-                            2,
-                        )
-
-                        value = ModbusTcpClient.convert_from_registers(
-                            values,
-                            data_type=ModbusTcpClient.DATATYPE.INT32,
-                        )
-
-                    elif sensor["modbus"]["read_type"] == "composed_datetime":
-                        values = self.pick_from_registers(
-                            registers,
-                            sensor["modbus"]["register"],
-                            6,
-                        )
-
-                        value = f"20{values[0]:02d}-{values[1]:02d}-{values[2]:02d}T{values[3]:02d}:{values[4]:02d}:{values[5]:02d}{self.timezone_offset}"
-
-                    elif sensor["modbus"]["read_type"] == "alarm":
-                        values = self.pick_from_registers(
-                            registers,
-                            sensor["modbus"]["register"],
-                            4,
-                        )
-
-                        value = "OFF"
-                        if (
-                            values[0] != 0
-                            or values[1] != 0
-                            or values[2] != 0
-                            or values[3] != 0
-                        ):
-                            value = "ON"
-
-                    elif sensor["modbus"]["read_type"] == "bit":
-                        values = self.pick_from_registers(
-                            registers,
-                            sensor["modbus"]["register"],
-                            1,
-                        )
-
-                        value = values[0]
-
-                        if (
-                            "bit" in sensor["modbus"]
-                            and "map" in sensor["modbus"]["bit"]
-                        ):
-                            value = self.map_bit_to_value(
-                                sensor["modbus"]["bit"]["map"],
-                                sensor["modbus"]["bit"]["default_value"],
-                                bin(value),
-                            )
-                        else:
-                            logging.error("Could not find needed modbus.bit.map config")
-                            continue
-
-                    else:
-                        logging.error(
-                            f"modbus.readtype of {sensor['modbus']['read_type']} not supported"
-                        )
-                        continue
-
-                except Exception as e:
-                    logging.error(f"Error occured {e}")
-
-                else:
-                    if not self.value_is_publishable(sensor, value):
-                        continue
-
-                    logging.info("Publishing sensor %s: %s", sensor["name"], value)
-
-                    self.publish(
-                        f"{self.config['mqtt']['topic_prefix']}/{sensor['name']}",
-                        value,
-                        retain=True,
-                    )
+            # An empty answer is a failed poll, and a failed poll publishes nothing:
+            # query_modbus has already dealt with the availability topic and with
+            # whatever has to be said on the sensors themselves.
+            if registers:
+                self.publish_readings(registers)
 
             # Wait until the next poll is due, which is the configured interval after
             # this one started, or the longer interval if the datalogger is not
@@ -1138,6 +1185,19 @@ class App:
 
             logging.debug(f"Datalogger scanning paused for {sleep_duration} seconds")
             sleep(sleep_duration)
+
+
+# Every modbus read type there is, and the only place any of them is named. The poll
+# loop and the polled register span both come from this table, so a new read type is
+# an entry here and a decoder above rather than another branch in each of them. The
+# names are the ones sensors.yaml is allowed to use; app/sensors.py is the gate.
+READ_TYPES = {
+    "register": ReadType(1, App.decode_register),
+    "long": ReadType(2, App.decode_long),
+    "composed_datetime": ReadType(6, App.decode_composed_datetime),
+    "alarm": ReadType(4, App.decode_alarm),
+    "bit": ReadType(1, App.decode_bit),
+}
 
 
 if __name__ == "__main__":

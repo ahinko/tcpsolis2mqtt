@@ -44,8 +44,14 @@ reset → poll → decode → guard → publish → sleep. The other modules are
 
 `sensors.yaml` is the source of truth for every register. Nothing in `app.py`
 hardcodes a register number: the polled address span is derived from the lowest and
-highest active `modbus.register`, widened by the read type's width (`long` +1,
-`alarm` +3, `composed_datetime` +5). Adding a sensor is a YAML edit.
+highest active `modbus.register`, widened by the read type's width. Adding a sensor is
+a YAML edit.
+
+The read types themselves live in `READ_TYPES` at the foot of `app.py`, one entry per
+type holding its width and its `App.decode_*` method. Both the span and the poll loop
+read that table, so a new read type is an entry plus a decoder, and never a branch in
+either of them. `app/sensors.py` decides which names `sensors.yaml` may use, and
+`tests/test_decode.py` fails if the two lists drift apart.
 
 `VERSION` in `app/app.py` is hand-maintained and ships in the discovery payload as
 the device's `sw_version`. Bump it with a release.
