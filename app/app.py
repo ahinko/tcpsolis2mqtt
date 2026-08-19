@@ -465,6 +465,12 @@ class App:
             "moniter": mr.text.split(";"),
         }
 
+        asleep = {
+            endpoint
+            for endpoint, fields in registers.items()
+            if self.http_response_is_dead(endpoint, fields)
+        }
+
         for sensor in self.sensors_config:
             if (
                 not sensor["active"]
@@ -475,6 +481,10 @@ class App:
                 continue
 
             endpoint = sensor["http"]["endpoint"]
+
+            if endpoint in asleep:
+                continue
+
             register = sensor["http"]["register"]
             value = self.http_value(registers[endpoint], endpoint, register)
 
@@ -519,6 +529,56 @@ class App:
             return None
 
         return value
+
+    def http_registers(self, endpoint):
+        # Which fields of a CGI response this app is set up to read.
+        return [
+            sensor["http"]["register"]
+            for sensor in self.sensors_config
+            if sensor["active"]
+            and "http" in sensor
+            and sensor["http"].get("endpoint") == endpoint
+            and "register" in sensor["http"]
+        ]
+
+    def http_response_is_dead(self, endpoint, fields):
+        # The datalogger is usually up before the inverter is. Its own page answers
+        # properly while inverter.cgi answers with nothing at all: on the morning of
+        # 2026-08-19 the serial came back empty and the firmware and model came back
+        # as "000000" and "0", where awake they read "83003A" and "509". The empty
+        # one was already dropped, but the other two are not empty and went straight
+        # out. query_http only runs when the datalogger comes back, so those two
+        # values were still what Home Assistant was showing hours later, and would
+        # have stood until the next time it went away.
+        #
+        # This is the judgement response_is_dead makes about a block of registers,
+        # for the same reason: a well formed answer in which everything reads as
+        # nothing is not a reading.
+        #
+        # Judged only on the fields this app reads. The rest of the response is
+        # described nowhere, and at least one of them holds "NO" whether the inverter
+        # is awake or not, so it cannot be part of the test.
+        values = [
+            self.http_value(fields, endpoint, register)
+            for register in self.http_registers(endpoint)
+        ]
+        present = [value for value in values if value is not None]
+
+        # Every field empty is not evidence of anything: nothing would be published
+        # from this endpoint either way, and http_value has already said so.
+        if not present:
+            return False
+
+        # "0", "000000" and "0.0" all mean the same nothing. One zero among real
+        # values is a reading -- a wifi signal really can be 0 -- so the whole set
+        # has to read as nothing before the response does.
+        if not all(value.strip("0.") == "" for value in present):
+            return False
+
+        logging.info(
+            f"Ignoring {endpoint}.cgi, every field it is read for is empty or zero"
+        )
+        return True
 
     def datalogger_is_offline(self, *, offline: bool):
         # Check if new state if offline
