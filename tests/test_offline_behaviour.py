@@ -199,3 +199,31 @@ def test_going_offline_still_publishes_what_is_genuinely_zero(offline):
     app = offline()
 
     assert published(app)["active_power"] == 0
+
+
+def test_both_availability_transitions_are_logged(make_app, caplog):
+    # Going offline was logged; coming back was not, so the only record of it was
+    # paho's debug line for the publish itself.
+    caplog.set_level("INFO")
+    app = make_app()
+    retries = app.config["datalogger"]["poll_retries"]
+
+    app.datalogger_is_offline(offline=False)
+
+    for _ in range(retries + 1):
+        app.datalogger_is_offline(offline=True)
+
+    messages = [record.message for record in caplog.records]
+
+    assert "Datalogger online" in messages
+    assert "Datalogger offline" in messages
+
+
+def test_a_transition_is_logged_once_not_every_poll(make_app, caplog):
+    caplog.set_level("INFO")
+    app = make_app()
+
+    for _ in range(5):
+        app.datalogger_is_offline(offline=False)
+
+    assert [r.message for r in caplog.records].count("Datalogger online") == 1
