@@ -74,6 +74,29 @@ def query(make_app, clock, monkeypatch):
     return _query
 
 
+@pytest.fixture
+def polls(make_app, clock, monkeypatch):
+    """One App polled repeatedly, so state that carries between polls is visible."""
+
+    def _polls(*rounds):
+        app = make_app()
+        app.get_register_interval()
+        client = StubClient()
+
+        def build(*args, **kwargs):
+            return client
+
+        monkeypatch.setattr(app_module, "ModbusTcpClient", build)
+
+        for answers in rounds:
+            client.answers = list(answers)
+            app.query_modbus()
+
+        return app
+
+    return _polls
+
+
 def test_a_chunk_is_read_once_when_it_answers(query):
     app, client, registers = query(live_response())
 
@@ -155,3 +178,46 @@ def test_the_client_is_not_given_a_setting_that_does_nothing(query):
     app, _, _ = query()
 
     assert "reconnect_delay" not in app.client_kwargs
+
+
+def test_a_connection_that_opens_is_not_proof_the_datalogger_is_there(query):
+    # The morning of 2026-08-19: the datalogger accepted the connection and then
+    # refused every register while the inverter woke up. Announcing online on the
+    # strength of the handshake reset the retry counter on each of those polls.
+    app, client, registers = query()
+
+    assert registers == {}
+    assert app.retries_done == 1, "the failed poll counted"
+
+
+def test_failed_polls_accumulate_towards_offline(polls):
+    # The bug this pins. Thirteen consecutive failures in the real incident, all of
+    # them logged "done 0 of 20 retries", because each poll's successful connect
+    # cleared the count the poll before had added.
+    app = polls((), (), ())
+
+    assert app.retries_done == 3
+
+
+def test_failed_polls_eventually_declare_the_datalogger_offline(polls, make_app):
+    retries = make_app().config["datalogger"]["poll_retries"]
+
+    app = polls(*[()] * (retries + 1))
+
+    assert app.datalogger_offline
+    assert dict(app.published)["tcpsolis2mqtt/datalogger_availability"] == "offline"
+
+
+def test_a_poll_that_reads_registers_says_the_datalogger_is_online(polls):
+    app = polls((live_response(),))
+
+    assert not app.datalogger_offline
+    assert app.retries_done == 0
+    assert dict(app.published)["tcpsolis2mqtt/datalogger_availability"] == "online"
+
+
+def test_reads_that_start_working_again_clear_the_count(polls):
+    app = polls((), (), (live_response(),))
+
+    assert app.retries_done == 0
+    assert not app.datalogger_offline

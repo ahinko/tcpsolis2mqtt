@@ -824,8 +824,18 @@ class App:
                 self.datalogger_is_offline(offline=True)
             return
 
-        else:
-            self.datalogger_is_offline(offline=False)
+        # A connection that opens says nothing about whether there is a working
+        # datalogger behind it, so nothing is declared here. Every morning while the
+        # inverter wakes up, this one accepts the connection and then refuses to serve
+        # a single register, and saying "online" on the strength of the handshake
+        # reset retries_done on every one of those polls. The counter never reached
+        # poll_retries, the datalogger was never declared offline, and the availability
+        # topic sat at online for as long as the state lasted -- thirteen consecutive
+        # failed polls on the morning of 2026-08-19, about seven minutes, with Home
+        # Assistant holding the voltages and the frequency from before it started.
+        #
+        # The first chunk of registers that actually arrives is what says we are
+        # online, further down the loop below.
 
         registers = {}
         chunk_size = self.config["datalogger"]["register_chunks"]
