@@ -53,6 +53,22 @@ read that table, so a new read type is an entry plus a decoder, and never a bran
 either of them. `app/sensors.py` decides which names `sensors.yaml` may use, and
 `tests/test_decode.py` fails if the two lists drift apart.
 
+### The modbus connection
+
+The client belongs to the app (`self.client`), not to a poll. `ensure_connected()` is
+the only thing that dials one and `drop_connection(reason)` the only thing that throws
+one away, which is what lets a read that raised redial mid-poll instead of writing
+into a dead socket. `release_connection()` at the end of a good poll is the single
+place the `datalogger.persistent_connection` setting is read.
+
+That setting is off by default and expected to be temporary. The stick accepts one
+connection at a time, so holding ours keeps everything else — Solis Cloud included —
+off it. Whether holding it even helps depends on whether this stick hangs up on an
+idle connection, which can only be measured: every connection logs one numbered line
+saying why the previous one ended, at info when the setting is on and debug when it is
+off. Once there are enough of those lines to decide, the setting and the losing branch
+both go, and that removal is the breaking change worth a 4.0.0.
+
 `VERSION` in `app/app.py` is hand-maintained and ships in the discovery payload as
 the device's `sw_version`. Bump it with a release.
 

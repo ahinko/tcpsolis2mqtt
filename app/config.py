@@ -20,6 +20,17 @@ class DataLoggerConfig(Schema):
     poll_interval_if_off = fields.Int(required=False, load_default=600)
     poll_retries = fields.Int(required=False, load_default=10)
     register_chunks = fields.Int(required=False, load_default=80)
+    # Keep the modbus connection open between polls instead of dialling a new one
+    # every time. Off by default, and deliberately so: this datalogger accepts one
+    # connection at a time, so holding it means nothing else -- Solis Cloud included
+    # -- can talk to the stick, where closing it leaves a gap in every poll cycle.
+    #
+    # Expected to be temporary. These sticks are widely reported to close an idle
+    # connection themselves after a minute or two, which at a 30 second poll interval
+    # would mean reconnecting nearly every poll and gaining nothing. The reconnect
+    # counts this logs are how that gets measured; once it is measured, one of the two
+    # behaviours goes and this setting goes with it.
+    persistent_connection = fields.Bool(required=False, load_default=False)
     http = fields.Nested(HttpConfig(), required=False)
 
 

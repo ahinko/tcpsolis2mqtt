@@ -8,6 +8,11 @@ datalogger:
   poll_interval_if_off: 600
   poll_retries: 10
   register_chunks: 20
+  # Keep the modbus connection open between polls instead of dialling a new one every
+  # poll. The datalogger accepts one connection at a time, so with this on nothing
+  # else can reach it -- including Solis Cloud. Leave it off unless you are measuring
+  # what it does; the app logs a line for every connection it opens.
+  persistent_connection: False
   http:
     enabled: True
     user: admin

@@ -55,6 +55,28 @@ def test_a_fractional_rating_is_kept():
     )
 
 
+def test_the_connection_is_not_kept_unless_it_is_asked_for():
+    # The datalogger accepts one connection at a time, so holding ours keeps
+    # everything else -- Solis Cloud included -- off the stick. Anyone who wants that
+    # trade has to say so.
+    assert AppConfig().load(config())["datalogger"]["persistent_connection"] is False
+
+
+def test_the_connection_can_be_kept():
+    kept = config()
+    kept["datalogger"]["persistent_connection"] = True
+
+    assert AppConfig().load(kept)["datalogger"]["persistent_connection"] is True
+
+
+def test_the_shipped_example_leaves_the_connection_per_poll_behaviour_alone():
+    import yaml
+
+    example = yaml.safe_load(open("config.example.yaml"))
+
+    assert not example["datalogger"].get("persistent_connection")
+
+
 def test_the_shipped_example_names_a_rating():
     import yaml
 
