@@ -41,7 +41,7 @@ Because it works! If I for some reason would stop using this myself then I will 
 
 ### Does Solis Cloud still work?
 
-Most other integrations that I found all stated that Solis Cloud would not work when polling the data logger over MODBUS. In my brief and short testing Solid Cloud still works, but not perfectly. My guess is that most other integrations keeps the connection with the data logger alive while this project closes the connection when its done and then reconnects when it's time for the next update. By "not perfectly" I mean that I can see that Solis Cloud is not always updated every 5 minutes. Sometimes it takes 15-20 minutes between updates but I've always seen that the data logger sooner or later are able to send data to Solis Cloud. And if I stop the script/Docker container I always seen an update in Solid cloud within 10 minutes without having to restart the data logger.
+Most other integrations that I found all stated that Solis Cloud would not work when polling the data logger over MODBUS. In my brief and short testing Solid Cloud still works, but not perfectly. My guess is that most other integrations keeps the connection with the data logger alive while this project closes the connection when its done and then reconnects when it's time for the next update. That is still the default, and `datalogger.persistent_connection` is the setting that changes it — see [Keeping the connection open](#keeping-the-connection-open). By "not perfectly" I mean that I can see that Solis Cloud is not always updated every 5 minutes. Sometimes it takes 15-20 minutes between updates but I've always seen that the data logger sooner or later are able to send data to Solis Cloud. And if I stop the script/Docker container I always seen an update in Solid cloud within 10 minutes without having to restart the data logger.
 
 ### Is it possible to control the inverter?
 
@@ -61,6 +61,28 @@ Maybe, I have no plans for it at the moment. My main goal is to get the data int
 
 ## Getting started
 Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`. Most values should be self-explanatory. `register_chunks` is set to 20 by default but during my testing I've been able to query my datalogger for more than 80 registers at the same time.
+
+### Keeping the connection open
+By default the app dials a connection to the data logger, reads, and hangs up again on every poll. For MODBUS TCP that's the unusual choice — one connection held open is the normal one — and `datalogger.persistent_connection: True` does that instead:
+
+```yaml
+datalogger:
+  persistent_connection: True
+```
+
+It's off by default because it's a trade, not an improvement. The data logger accepts **one connection at a time**, so while this app holds it, nothing else can talk to the stick — Solis Cloud included. Hanging up after each poll leaves a gap in every cycle where something else can get in.
+
+Whether it's worth the trade is a question about your stick, not about this app: these WiFi sticks are widely reported to close an idle connection themselves after a minute or two, and at a 30 second poll interval that would mean reconnecting nearly every poll and gaining nothing. So the app logs a line for every connection it opens, numbered and saying why the previous one ended:
+
+```
+Connected to datalogger, connection 12 since startup, previous one ended because a read raised OSError: Connection reset by peer
+```
+
+Turn the setting on, leave it a day, and count those lines. One or two means the connection is surviving. One per poll means the stick is hanging up and the setting is buying nothing.
+
+Either way the app sets TCP keepalive on the socket, so a data logger that vanishes while the app is sleeping is noticed by the kernel within about 45 seconds instead of by the next read timing out three times over.
+
+Expect this setting to go away once there are enough measurements to pick a winner. Whichever behaviour loses will be removed along with it.
 
 ### Upgrading to 3.0
 **`inverter.max_power_kw` is now required and the container won't start without it.** Set it to the nameplate rating of your inverter, in kW:

@@ -4,6 +4,7 @@ import yaml
 import logging
 import arrow
 import requests
+import socket
 
 from typing import Any, Callable, NamedTuple
 from config import AppConfig
@@ -42,6 +43,23 @@ CHUNK_RETRY_DELAY = 2
 # turn a poll that used to succeed into one that fails, and it wants measuring against
 # the hardware rather than guessing.
 MODBUS_TIMEOUT = 10
+
+# TCP keepalive for the connection to the datalogger: how long it may sit idle, then
+# how often to probe and how many unanswered probes declare the socket dead.
+#
+# Without these the kernel says nothing about a datalogger that vanished while we were
+# sleeping between polls. The socket still looks fine, so the loss surfaces only as
+# the next read timing out, CHUNK_ATTEMPTS times over -- most of a poll interval spent
+# discovering something that could have been known before the poll started. That is
+# what makes a kept connection worth having at all.
+#
+# 30 seconds idle plus three probes five seconds apart declares a dead peer inside 45,
+# which fits within the shortest poll interval anyone sets. The names are Linux's, and
+# the container is Alpine, but the tests run wherever the developer is: macOS spells
+# the idle option TCP_KEEPALIVE, so each option is applied only where it exists.
+KEEPALIVE_IDLE = 30
+KEEPALIVE_INTERVAL = 5
+KEEPALIVE_PROBES = 3
 
 # How many polls a finished period's total has to hold a new value before it is
 # believed. A rollover happens once a day at most and then persists, so a value that
@@ -127,6 +145,12 @@ class App:
 
         self.register_span_start = 0
         self.register_span_end = 0
+
+        # The connection is the app's, not the poll's. None means the next poll has to
+        # dial one, which is every poll unless datalogger.persistent_connection is on.
+        self.client = None
+        self.connections_opened = 0
+        self.connection_closed_reason = "nothing has been connected yet"
 
         self.last_accepted_value = {}
         self.current_day = None
@@ -864,9 +888,7 @@ class App:
         logging.info("Validation failed, every register in the response is zero")
         return True
 
-    def read_chunk(
-        self, client: ModbusTcpClient, address: int, count: int
-    ) -> list[int] | None:
+    def read_chunk(self, address: int, count: int) -> list[int] | None:
         # One chunk of registers, or None if the datalogger would not give it up.
         # Bounded attempts with a pause between them: the loop this replaces never
         # advanced and never slept, so a chunk that kept failing was retried as fast
@@ -875,48 +897,87 @@ class App:
         # for minutes, concentrated in the 05:30-05:45 window when the datalogger was
         # already struggling to stay up.
         for attempt in range(1, CHUNK_ATTEMPTS + 1):
-            try:
-                message = client.read_input_registers(
-                    device_id=self.config["datalogger"]["device_id"],
-                    address=address,
-                    count=count,
-                )
-            except Exception as e:
-                # The socket cannot be trusted after this, and pymodbus will not
-                # notice: its connect() returns true whenever it still holds a socket
-                # object, without testing whether anything is at the other end. So a
-                # broken pipe left every later request writing into the same dead
-                # socket, which is why this used to kill the process and let the
-                # container restart.
-                #
-                # close() drops the socket, and the attempt after this one dials a
-                # new connection. The poll can then still succeed, where a restart
-                # lost it along with the in-memory half of the energy guards: the
-                # plausibility timestamps and the debounce counts are not in the
-                # retained topics load_state reads back.
-                #
-                # Only for a raised error. A response that says isError is the
-                # datalogger declining to answer, not a dead socket -- that is what
-                # it does every morning while the inverter wakes up, and reconnecting
-                # each time would be pure churn.
-                logging.error(f"Error occured while querying modbus: {e}")
-                client.close()
-            else:
-                if not message.isError():
-                    return message.registers
+            # Per attempt, because an attempt can end by throwing the connection away.
+            # Cheap when there already is one: this hands back the client the app is
+            # holding, whether that was dialled a moment ago or three polls back.
+            client = self.ensure_connected()
 
-                logging.error(
-                    f"Could not read registers {address} to {address + count - 1} "
-                    f"on attempt {attempt}, might have lost connection"
-                )
+            if client is not None:
+                try:
+                    message = client.read_input_registers(
+                        device_id=self.config["datalogger"]["device_id"],
+                        address=address,
+                        count=count,
+                    )
+                except Exception as e:
+                    # The socket cannot be trusted after this, and pymodbus will not
+                    # notice: its connect() returns true whenever it still holds a
+                    # socket object, without testing whether anything is at the other
+                    # end. So a broken pipe left every later request writing into the
+                    # same dead socket, which is why this used to kill the process and
+                    # let the container restart.
+                    #
+                    # Dropping it means the attempt after this one dials a new
+                    # connection, and the poll can still succeed -- where a restart
+                    # lost the in-memory half of the energy guards with it: the
+                    # plausibility timestamps and the debounce counts are not in the
+                    # retained topics load_state reads back.
+                    #
+                    # Only for a raised error. A response that says isError is the
+                    # datalogger declining to answer, not a dead socket -- that is what
+                    # it does every morning while the inverter wakes up, and
+                    # reconnecting each time would be pure churn.
+                    logging.error(f"Error occured while querying modbus: {e}")
+                    self.drop_connection(f"a read raised {type(e).__name__}: {e}")
+                else:
+                    if not message.isError():
+                        return message.registers
+
+                    logging.error(
+                        f"Could not read registers {address} to {address + count - 1} "
+                        f"on attempt {attempt}, might have lost connection"
+                    )
 
             if attempt < CHUNK_ATTEMPTS:
                 sleep(CHUNK_RETRY_DELAY)
 
         return None
 
-    def connect_to_datalogger(self) -> ModbusTcpClient | None:
-        # A connected client, or None with the datalogger already told it is offline.
+    def keepalive_options(self) -> list[tuple[int, int, int]]:
+        # setsockopt arguments for this platform, skipping what it does not have.
+        options = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+
+        for name, value in (
+            # Linux, then the macOS spelling of the same option.
+            (("TCP_KEEPIDLE", "TCP_KEEPALIVE"), KEEPALIVE_IDLE),
+            (("TCP_KEEPINTVL",), KEEPALIVE_INTERVAL),
+            (("TCP_KEEPCNT",), KEEPALIVE_PROBES),
+        ):
+            option = next(
+                (getattr(socket, n) for n in name if hasattr(socket, n)), None
+            )
+
+            if option is not None:
+                options.append((socket.IPPROTO_TCP, option, value))
+
+        return options
+
+    def enable_keepalive(self, client: ModbusTcpClient) -> None:
+        # On every connection, not only the ones that are kept: a poll can outlive its
+        # own socket -- CHUNK_ATTEMPTS reads at MODBUS_TIMEOUT each is 30 seconds of
+        # one -- and nothing here is worth a branch to avoid.
+        if client.socket is None:
+            return
+
+        try:
+            for level, option, value in self.keepalive_options():
+                client.socket.setsockopt(level, option, value)
+        except OSError as e:
+            # Not fatal. Keepalive makes a vanished datalogger surface sooner; without
+            # it the read timeouts still find out, just slower.
+            logging.warning(f"Could not set TCP keepalive on the connection: {e}")
+
+    def dial_datalogger(self) -> ModbusTcpClient | None:
         try:
             client = ModbusTcpClient(
                 self.config["datalogger"]["host"],
@@ -931,9 +992,9 @@ class App:
 
         except Exception as e:
             logging.error(f"Unable to connect to datalogger: {e}")
-            if not self.datalogger_offline:
-                self.datalogger_is_offline(offline=True)
             return None
+
+        self.enable_keepalive(client)
 
         # A connection that opens says nothing about whether there is a working
         # datalogger behind it, so nothing is declared here. Every morning while the
@@ -946,10 +1007,79 @@ class App:
         # Assistant holding the voltages and the frequency from before it started.
         #
         # The first chunk of registers that actually arrives is what says we are
-        # online, in read_span below.
+        # online, in read_span below. Keeping a connection makes that the only way it
+        # can be said, since a reused connection does no handshake to be fooled by.
         return client
 
-    def read_span(self, client: ModbusTcpClient) -> tuple[dict[int, int], int]:
+    def ensure_connected(self) -> ModbusTcpClient | None:
+        # The connection the app is holding, dialling one first if it has none. None
+        # means the datalogger did not answer the dial; the caller decides what a poll
+        # makes of that, so that a failed poll is counted once however many attempts
+        # it was made of.
+        if self.client is not None:
+            # connected only reports whether the client is still holding a socket
+            # object, which is exactly the question here. When the datalogger hangs up
+            # mid-read pymodbus closes its own socket, and its next request then dials
+            # a new one out of sight: no line in the log, and no chance to set
+            # keepalive on the socket that replaced it. Counting reconnects is the
+            # whole reason the setting exists, so they are made here or not at all.
+            if self.client.connected:
+                return self.client
+
+            self.drop_connection("pymodbus had already closed the socket")
+
+        reason = self.connection_closed_reason
+        client = self.dial_datalogger()
+
+        if client is None:
+            return None
+
+        self.client = client
+        self.connections_opened += 1
+
+        # "The setting is on" and "the connection is actually surviving" look the same
+        # in the logs otherwise, and this line is how the question the setting exists
+        # to ask gets answered: these sticks are widely reported to hang up on an idle
+        # connection after a minute or two, which at a 30 second poll interval would
+        # mean reconnecting nearly every poll and gaining nothing. Leave it on for a
+        # day and count these.
+        message = (
+            f"Connected to datalogger, connection {self.connections_opened} since "
+            f"startup, previous one ended because {reason}"
+        )
+
+        if self.config["datalogger"]["persistent_connection"]:
+            logging.info(message)
+        else:
+            # A connection per poll is the whole design in this mode, so it is not
+            # news, and at a 30 second interval it would be 2880 lines a day.
+            logging.debug(message)
+
+        return self.client
+
+    def drop_connection(self, reason: str) -> None:
+        # Throw the connection away, with why on record for the line the next dial
+        # logs. Safe to call when there is nothing to drop, which is what makes it
+        # usable as "make sure there is no connection" as well.
+        self.connection_closed_reason = reason
+
+        if self.client is None:
+            return
+
+        self.client.close()
+        self.client = None
+
+    def release_connection(self) -> None:
+        # End of a poll that worked. Holding on to the connection is the entire point
+        # of the setting; hanging up is what this app has always done, and what leaves
+        # the datalogger free for whatever else wants to talk to it -- it accepts one
+        # connection at a time.
+        if self.config["datalogger"]["persistent_connection"]:
+            return
+
+        self.drop_connection("the connection is not kept between polls")
+
+    def read_span(self) -> tuple[dict[int, int], int]:
         # The whole register span, chunk by chunk, with the number of registers that
         # were asked for. The two together are what the caller judges the poll on: a
         # short answer is a failed poll, however well formed each chunk was.
@@ -981,7 +1111,7 @@ class App:
             # 80 register responses on 2026-07-29 alone.
             expected_registers += count
 
-            values = self.read_chunk(client, address, count)
+            values = self.read_chunk(address, count)
 
             if values is None:
                 # Nothing to gain from asking a datalogger that just refused three
@@ -1001,14 +1131,15 @@ class App:
     def query_modbus(self) -> dict[int, int]:
         logging.info("Querying modbus")
 
-        client = self.connect_to_datalogger()
-
-        if client is None:
+        if self.ensure_connected() is None:
+            # Nothing answered, so there is nothing to read. One failed poll, counted
+            # once: read_chunk may dial again within this poll, and every one of those
+            # attempts failing is still the same single failure to the retry budget.
+            if not self.datalogger_offline:
+                self.datalogger_is_offline(offline=True)
             return {}
 
-        registers, expected_registers = self.read_span(client)
-
-        client.close()
+        registers, expected_registers = self.read_span()
 
         # Sometimes we get a response with almost all values being 0, usually also multiple registers
         # are missing. In that case we just return an empty dictionary. This validation is not perfect
@@ -1018,7 +1149,14 @@ class App:
                 f"Validation of number of queried registers failed. "
                 f"Queried: {expected_registers}, received: {len(registers)}"
             )
+            # A poll that could not read the span it asked for leaves a connection
+            # there is no reason to trust, so the next poll starts from a fresh one.
+            # That is also what every poll did before a connection could be kept, so
+            # turning the setting on cannot make a bad morning worse than it was.
+            self.drop_connection("the register span could not be read in full")
             return {}
+
+        self.release_connection()
 
         if self.response_is_dead(registers):
             return {}

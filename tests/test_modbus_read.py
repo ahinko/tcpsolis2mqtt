@@ -9,98 +9,12 @@ complete 80 register responses discarded on top of that, because the expected
 register count was incremented once per attempt rather than once per chunk.
 """
 
-import pytest
-
 import app as app_module
 
-# The registers sensors.yaml actually asks for: 3004 to 3077 inclusive. This used to
-# be 80, the chunk size, because whole chunks were read whatever the span was.
-SPAN = 74
-FIRST, LAST = 3004, 3077
-
-
-class Response:
-    def __init__(self, registers=None, error=False):
-        self.registers = registers or []
-        self.error = error
-
-    def isError(self):
-        return self.error
-
-
-class StubClient:
-    """A datalogger that answers with whatever the test queued up."""
-
-    def __init__(self, *answers):
-        self.answers = list(answers)
-        self.reads = []
-        self.closes = 0
-        self.connected = True
-
-    def connect(self):
-        self.connected = True
-        return True
-
-    def close(self):
-        self.closes += 1
-        self.connected = False
-
-    def read_input_registers(self, device_id, address, count):
-        self.reads.append((address, count))
-        answer = self.answers.pop(0) if self.answers else Response(error=True)
-
-        if isinstance(answer, Exception):
-            raise answer
-
-        return answer
-
-
-def live_response(address=FIRST, count=SPAN):
-    # Register 3041 is the inverter temperature, the only thing that has to be non
-    # zero for the response not to count as dead.
-    return Response([250 if address + i == 3041 else 0 for i in range(count)])
-
-
-@pytest.fixture
-def query(make_app, clock, monkeypatch):
-    """Run one poll against a stub datalogger and return what it produced."""
-
-    def _query(*answers):
-        client = StubClient(*answers)
-        app = make_app()
-        app.get_register_interval()
-
-        def build(*args, **kwargs):
-            app.client_kwargs = kwargs
-            return client
-
-        monkeypatch.setattr(app_module, "ModbusTcpClient", build)
-        return app, client, app.query_modbus()
-
-    return _query
-
-
-@pytest.fixture
-def polls(make_app, clock, monkeypatch):
-    """One App polled repeatedly, so state that carries between polls is visible."""
-
-    def _polls(*rounds):
-        app = make_app()
-        app.get_register_interval()
-        client = StubClient()
-
-        def build(*args, **kwargs):
-            return client
-
-        monkeypatch.setattr(app_module, "ModbusTcpClient", build)
-
-        for answers in rounds:
-            client.answers = list(answers)
-            app.query_modbus()
-
-        return app
-
-    return _polls
+# The stub datalogger, the register span and the query/polls fixtures live in
+# conftest.py, because the connection lifetime tests in test_persistent_connection.py
+# poll the same stub.
+from conftest import FIRST, LAST, SPAN, Response, StubClient, live_response
 
 
 def test_a_chunk_is_read_once_when_it_answers(query):
