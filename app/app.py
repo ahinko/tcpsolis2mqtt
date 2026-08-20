@@ -906,7 +906,7 @@ class App:
                     return message.registers
 
                 logging.error(
-                    f"Could not read registers {address} to {address + count} "
+                    f"Could not read registers {address} to {address + count - 1} "
                     f"on attempt {attempt}, might have lost connection"
                 )
 
