@@ -186,6 +186,8 @@ def make_app(sensors_config):
         app.register_span_start = 0
         app.register_span_end = 0
 
+        app.http_polled_at = None
+
         app.client = None
         app.connections_opened = 0
         app.connection_closed_reason = "nothing has been connected yet"
