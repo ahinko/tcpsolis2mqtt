@@ -10,8 +10,12 @@ datalogger:
   register_chunks: 20
   # Keep the modbus connection open between polls instead of dialling a new one every
   # poll. The datalogger accepts one connection at a time, so with this on nothing
-  # else can reach it -- including Solis Cloud. Leave it off unless you are measuring
-  # what it does; the app logs a line for every connection it opens.
+  # else can reach it -- including Solis Cloud.
+  #
+  # Leave it off if you use Solis Cloud. Turn it on if polling stops working after the
+  # first read: newer firmware wedges port 502 whenever the connection is closed and
+  # takes 3-6 minutes to recover, which a held connection avoids entirely. See
+  # "Keeping the connection open" in the readme.
   persistent_connection: False
   http:
     enabled: True

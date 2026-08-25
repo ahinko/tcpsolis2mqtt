@@ -25,11 +25,15 @@ class DataLoggerConfig(Schema):
     # connection at a time, so holding it means nothing else -- Solis Cloud included
     # -- can talk to the stick, where closing it leaves a gap in every poll cycle.
     #
-    # Expected to be temporary. These sticks are widely reported to close an idle
-    # connection themselves after a minute or two, which at a 30 second poll interval
-    # would mean reconnecting nearly every poll and gaining nothing. The reconnect
-    # counts this logs are how that gets measured; once it is measured, one of the two
-    # behaviours goes and this setting goes with it.
+    # Permanent, and the user's call rather than this project's. Newer firmware needs
+    # it on -- the logger in #114 wedges port 502 for three to six minutes whenever
+    # the connection is closed, so connection-per-poll cannot work there -- while
+    # older firmware does not care and keeps the cloud. Solis firmware is not self
+    # service, so both populations are here to stay.
+    #
+    # The "these sticks close an idle connection after a minute or two" worry did not
+    # hold on the stick this was written against; the reconnect counts this logs are
+    # how anyone else can check their own.
     persistent_connection = fields.Bool(required=False, load_default=False)
     http = fields.Nested(HttpConfig(), required=False)
 

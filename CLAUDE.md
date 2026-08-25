@@ -61,13 +61,25 @@ one away, which is what lets a read that raised redial mid-poll instead of writi
 into a dead socket. `release_connection()` at the end of a good poll is the single
 place the `datalogger.persistent_connection` setting is read.
 
-That setting is off by default and expected to be temporary. The stick accepts one
-connection at a time, so holding ours keeps everything else — Solis Cloud included —
-off it. Whether holding it even helps depends on whether this stick hangs up on an
-idle connection, which can only be measured: every connection logs one numbered line
+That setting is off by default and is permanent — it is a per-user trade, not a
+migration. The stick accepts one connection at a time, so holding ours keeps
+everything else — Solis Cloud included — off it.
+
+It exists because newer firmware needs it: on `1001318c` (#114) the logger wedges
+port 502 whenever the connection is *closed* and refuses new connects for 3-6 minutes,
+which makes connection-per-poll unusable at any sane interval. It stays off by default
+because Solis firmware is not self-service — users have to ask the manufacturer to
+push it — so most sticks in the wild are on older firmware where closing is harmless
+and the cloud keeps working.
+
+The "these sticks hang up on an idle connection after a minute or two" premise in #172
+was wrong, at least here: measured 2026-08-24/25 on firmware `10010125`, one connection
+served ~1326 polls over 11h03m and ended only when the inverter powered down at dusk,
+never from an idle timeout. Note that nothing is held overnight — the stick is
+unpowered, and that run had no connection at all for 8h20m between dusk and dawn — so
+this setting is a daylight-only feature. Every connection still logs one numbered line
 saying why the previous one ended, at info when the setting is on and debug when it is
-off. Once there are enough of those lines to decide, the setting and the losing branch
-both go, and that removal is the breaking change worth a 4.0.0.
+off.
 
 `VERSION` in `app/app.py` is hand-maintained and ships in the discovery payload as
 the device's `sw_version`. Bump it with a release.

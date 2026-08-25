@@ -43,6 +43,8 @@ Because it works! If I for some reason would stop using this myself then I will 
 
 Most other integrations that I found all stated that Solis Cloud would not work when polling the data logger over MODBUS. In my brief and short testing Solid Cloud still works, but not perfectly. My guess is that most other integrations keeps the connection with the data logger alive while this project closes the connection when its done and then reconnects when it's time for the next update. That is still the default, and `datalogger.persistent_connection` is the setting that changes it — see [Keeping the connection open](#keeping-the-connection-open). By "not perfectly" I mean that I can see that Solis Cloud is not always updated every 5 minutes. Sometimes it takes 15-20 minutes between updates but I've always seen that the data logger sooner or later are able to send data to Solis Cloud. And if I stop the script/Docker container I always seen an update in Solid cloud within 10 minutes without having to restart the data logger.
 
+Note that this only holds while the app hangs up between polls. If your firmware forces you to use `datalogger.persistent_connection: True`, Solis Cloud stops updating for as long as the app is running — see [Keeping the connection open](#keeping-the-connection-open).
+
 ### Is it possible to control the inverter?
 
 I have not focused on that since I don't have a need for it. If its possible to do so via MODBUS then it should be possible to add that functionality.
@@ -50,6 +52,8 @@ I have not focused on that since I don't have a need for it. If its possible to 
 ### Will this work with other data loggers, inverters or firmware versions?
 
 I have no idea. I will probably never change to another data logger or upgrade the firmware unless I absolutely have to. If you are able to get this working on another data logger, inverter or firmware version, please let me know and I will add the information to the repo!
+
+One firmware difference is known and worked around: on an S2-WL-ST running `1001318c`, closing the MODBUS connection wedges port 502 for several minutes, so the default hang-up-every-poll behaviour doesn't work there. `datalogger.persistent_connection: True` is the fix — see [Keeping the connection open](#keeping-the-connection-open).
 
 ### How do I update the firmware of the data logger and inverter?
 
@@ -63,26 +67,46 @@ Maybe, I have no plans for it at the moment. My main goal is to get the data int
 Prepare a config file. Use `config.example.yaml` and modify it to your needs and save it as `config.yaml`. Most values should be self-explanatory. `register_chunks` is set to 20 by default but during my testing I've been able to query my datalogger for more than 80 registers at the same time.
 
 ### Keeping the connection open
-By default the app dials a connection to the data logger, reads, and hangs up again on every poll. For MODBUS TCP that's the unusual choice — one connection held open is the normal one — and `datalogger.persistent_connection: True` does that instead:
+By default the app dials a connection to the data logger, reads, and hangs up again on every poll. `datalogger.persistent_connection: True` holds a single connection open instead:
 
 ```yaml
 datalogger:
   persistent_connection: True
 ```
 
-It's off by default because it's a trade, not an improvement. The data logger accepts **one connection at a time**, so while this app holds it, nothing else can talk to the stick — Solis Cloud included. Hanging up after each poll leaves a gap in every cycle where something else can get in.
+It's off by default because it's a trade rather than an improvement. On newer firmware it isn't strictly required either — you can get that working without it, just not well — so read both halves before you decide.
 
-Whether it's worth the trade is a question about your stick, not about this app: these WiFi sticks are widely reported to close an idle connection themselves after a minute or two, and at a 30 second poll interval that would mean reconnecting nearly every poll and gaining nothing. So the app logs a line for every connection it opens, numbered and saying why the previous one ended:
+#### Turn it on if polling stops working after the first read
+On newer data logger firmware — confirmed on an S2-WL-ST running `1001318c`, see [#114](https://github.com/ahinko/tcpsolis2mqtt/issues/114) — the logger's MODBUS server wedges when the TCP connection is **closed**. What you'll see:
+
+* The first poll after starting the container succeeds.
+* Every poll after that fails to connect, for minutes at a time.
+* The log fills up with `Unable to connect to datalogger: Modbus Error: Client not connected to datalogger`, or connections are refused outright (`[Errno 111] Connection refused`).
+* It looks like the stick needs a reboot. It doesn't — port 502 heals on its own after roughly 3-6 minutes, the next poll works, and then the whole cycle repeats.
+
+Reads on a connection that is never closed don't trigger this, so turning the setting on avoids it completely and lets you poll at a normal interval. Raising `poll_interval` above 10 minutes works too — every reconnect then finds a healed port, and Solis Cloud keeps working — but ten minute old data is the price.
+
+#### Leave it off if you want Solis Cloud to keep working
+The data logger accepts **one connection at a time**, so while this app holds it, nothing else can talk to the stick. Hanging up after each poll leaves a gap in every cycle where Solis Cloud can get in; holding the connection closes that gap for good.
+
+Data logger firmware is not self-service — you have to [ask Solis to push it](#how-do-i-update-the-firmware-of-the-data-logger-and-inverter) — so plenty of sticks are still on older firmware where closing the connection is perfectly harmless. If yours is one of those and you use the Solis app, leave this off.
+
+Neither behaviour is going away. Which one is right depends on your firmware and on whether you use Solis Cloud, and that isn't something this project can decide for you.
+
+#### Counting connections
+The app logs a line every time it opens a connection, numbered and saying why the previous one ended:
 
 ```
 Connected to datalogger, connection 12 since startup, previous one ended because a read raised OSError: Connection reset by peer
 ```
 
-Turn the setting on, leave it a day, and count those lines. One or two means the connection is surviving. One per poll means the stick is hanging up and the setting is buying nothing.
+That's at `info` when the setting is on and `debug` when it's off. If you're unsure whether holding the connection is helping, turn it on and count the lines: a handful a day means the connection is surviving, one per poll means the stick is hanging up and you're gaining nothing.
+
+For reference, on the S2-WL-ST this project was written against (firmware `10010125`) a single connection survived 11 hours and about 1300 polls, from mid-morning until the inverter powered down at dusk and took the stick with it. It ended because the hardware lost power, not because the stick hung up, so that logger does not close idle connections on its own.
+
+Don't expect a connection to survive the night. Once the inverter shuts down the data logger goes with it and there is nothing to hold a connection to — on the same run there was no connection at all for the eight hours between dusk and dawn. This setting only does anything during daylight.
 
 Either way the app sets TCP keepalive on the socket, so a data logger that vanishes while the app is sleeping is noticed by the kernel within about 45 seconds instead of by the next read timing out three times over.
-
-Expect this setting to go away once there are enough measurements to pick a winner. Whichever behaviour loses will be removed along with it.
 
 ### Upgrading to 3.0
 **`inverter.max_power_kw` is now required and the container won't start without it.** Set it to the nameplate rating of your inverter, in kW:
