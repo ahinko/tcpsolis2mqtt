@@ -114,10 +114,24 @@ HTTP_PADDING = "\x00 \t\r\n\v\f"
 # it had at the moment we hung -- which is the stale reading docs/energy-guards.md
 # exists to prevent.
 #
-# query_http only runs on the transition back to online, which is the moment the
-# datalogger is least likely to be fully awake and most likely to accept a connection
-# it cannot answer.
+# The scrape on the transition back to online is the one most exposed to this: that is
+# the moment the datalogger is least likely to be fully awake and most likely to
+# accept a connection it cannot answer.
 HTTP_TIMEOUT = (5, 10)
+
+# How long a set of CGI values stands before they are read again.
+#
+# The transition back to online used to be the only trigger, which put the single
+# scrape of the day at the worst possible moment: the datalogger is up before the
+# inverter is, so inverter.cgi answers with zeros and http_response_is_dead correctly
+# drops the whole endpoint -- and then nothing tried again until the next time the
+# datalogger went away. A sensor that missed its one chance stayed empty in Home
+# Assistant for a day.
+#
+# Four times a day is aimed at that, not at freshness. Nothing on these two pages
+# changes quickly; the only value that moves at all is the wifi signal. What matters
+# is having more than one attempt, at hours when the inverter is certainly awake.
+HTTP_REFRESH_SECONDS = 6 * 60 * 60
 
 
 class ReadType(NamedTuple):
@@ -151,6 +165,10 @@ class App:
         self.client = None
         self.connections_opened = 0
         self.connection_closed_reason = "nothing has been connected yet"
+
+        # When the CGI pages were last read, so they can be refreshed on a timer
+        # rather than only when the datalogger comes back. None means never.
+        self.http_polled_at = None
 
         self.last_accepted_value = {}
         self.current_day = None
@@ -460,6 +478,11 @@ class App:
                     )
 
     def query_http(self):
+        # Stamped whether or not there is anything to fetch: this is when the pages
+        # were last tried, and a config with http off must not leave the refresh
+        # below due on every poll forever.
+        self.http_polled_at = monotonic()
+
         # Check if http is enabled
         if not self.config["datalogger"]["http"]["enabled"]:
             return
@@ -581,9 +604,11 @@ class App:
         # 2026-08-19 the serial came back empty and the firmware and model came back
         # as "000000" and "0", where awake they read "83003A" and "509". The empty
         # one was already dropped, but the other two are not empty and went straight
-        # out. query_http only runs when the datalogger comes back, so those two
-        # values were still what Home Assistant was showing hours later, and would
-        # have stood until the next time it went away.
+        # out. The transition back to online was the only thing that read these pages
+        # then, so those two values were still what Home Assistant was showing hours
+        # later, and would have stood until the next time it went away.
+        # HTTP_REFRESH_SECONDS is the other half of that: dropping an endpoint is only
+        # safe if something tries again, and now something does.
         #
         # This is the judgement response_is_dead makes about a block of registers,
         # for the same reason: a well formed answer in which everything reads as
@@ -660,6 +685,23 @@ class App:
         self.query_http()
         self.retries_done = 0
         self.datalogger_unreachable = False
+
+    def refresh_http_if_due(self) -> None:
+        # The CGI values again, if they have stood long enough. Called from the poll
+        # loop only where the datalogger has just answered, because these pages come
+        # off the same stick: overnight, when it is unpowered, a refresh would buy two
+        # HTTP_TIMEOUTs and publish nothing.
+        #
+        # Time, not polls. poll_interval is 30 and poll_interval_if_off is 600, so a
+        # count of polls would refresh twenty times more often in daylight than at
+        # night -- backwards, and impossible to reason about from the constant alone.
+        if (
+            self.http_polled_at is not None
+            and monotonic() - self.http_polled_at < HTTP_REFRESH_SECONDS
+        ):
+            return
+
+        self.query_http()
 
     def publish_availability(self, availability: str) -> None:
         # Only when it changed. A successful poll asserts this once for the connection
@@ -1337,6 +1379,11 @@ class App:
             # whatever has to be said on the sensors themselves.
             if registers:
                 self.publish_readings(registers)
+
+                # Only here: registers in hand is the proof that the stick is up and
+                # the inverter behind it is awake, which is exactly the condition the
+                # once-a-day scrape never had.
+                self.refresh_http_if_due()
 
             # Wait until the next poll is due, which is the configured interval after
             # this one started, or the longer interval if the datalogger is not
