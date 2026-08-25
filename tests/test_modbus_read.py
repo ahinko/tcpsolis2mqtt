@@ -31,15 +31,27 @@ def test_a_failing_chunk_is_not_retried_forever(query):
     assert registers == {}
 
 
-def test_a_raising_chunk_is_not_retried_forever(query):
+def test_a_raising_chunk_gives_up_rather_than_redialling(query):
+    # A raised error means the socket is gone, so every further attempt in this poll
+    # has to dial a new one at MODBUS_TIMEOUT apiece. Three of those plus the pauses
+    # between them is 34 seconds against a poll_interval of 30, which is how dusk on
+    # 2026-08-24 ended with no sleep at all before the next poll.
     app, client, registers = query(*[OSError("Connection reset by peer")] * 5)
 
-    assert len(client.reads) == app_module.CHUNK_ATTEMPTS
+    assert len(client.reads) == 1
     assert registers == {}
 
 
-def test_retries_are_spaced_out(query, clock):
+def test_a_raised_error_does_not_pause_before_giving_up(query, clock):
     query(*[OSError("boom")] * 5)
+
+    assert clock.now == 0, "nothing to wait for, the poll is over"
+
+
+def test_refusals_are_spaced_out(query, clock):
+    # A refusal still retries, because the socket is fine and the attempt after it
+    # costs one request rather than a reconnect.
+    query()
 
     # One pause between attempts, none after the last, so the loop cannot spin.
     assert clock.now == (app_module.CHUNK_ATTEMPTS - 1) * app_module.CHUNK_RETRY_DELAY
@@ -143,17 +155,21 @@ def test_reads_that_start_working_again_clear_the_count(polls):
     assert not app.datalogger_offline
 
 
-def test_a_broken_pipe_is_recovered_from_instead_of_killing_the_process(query):
+def test_a_broken_pipe_is_recovered_from_instead_of_killing_the_process(polls):
     # This used to be os._exit(1): kill the container and start again, losing the
     # plausibility timestamps and the debounce counts with it. The path could not even
     # be tested, because the exit would have taken the test runner down too.
-    app, client, registers = query(OSError("[Errno 32] Broken pipe"), live_response())
+    #
+    # The recovery is the poll after it rather than the attempt after it, which costs
+    # one poll out of a poll_retries budget of twenty. The process surviving is the
+    # part that mattered.
+    app = polls((OSError("[Errno 32] Broken pipe"),), (live_response(),))
 
-    assert len(registers) == SPAN
-    assert len(client.reads) == 2, "retried, and the retry worked"
+    assert app.stub_client.connects == 2, "the poll after it dialled again"
+    assert app.retries_done == 0, "and the datalogger is back"
 
 
-def test_a_raised_error_drops_the_socket_so_the_next_attempt_redials(query):
+def test_a_raised_error_drops_the_socket_so_the_next_poll_redials(polls):
     # pymodbus connect() returns true whenever it still holds a socket object,
     # without testing whether anything answers on it. Without the close, every later
     # request goes into the same dead socket.
@@ -161,9 +177,10 @@ def test_a_raised_error_drops_the_socket_so_the_next_attempt_redials(query):
     # A reset rather than a broken pipe, so this case can be run against the old
     # behaviour. A broken pipe there called os._exit and would take the test runner
     # with it, which is the other half of why that path was never covered.
-    app, client, registers = query(OSError("Connection reset by peer"), live_response())
+    app = polls((OSError("Connection reset by peer"),), (live_response(),))
 
-    assert client.closes == 2, "once for the dead socket, once at the end of the poll"
+    assert app.stub_client.closes == 2, "the dead socket, then the end of the good poll"
+    assert app.stub_client.connects == 2
 
 
 def test_a_refused_read_does_not_drop_the_socket(query):

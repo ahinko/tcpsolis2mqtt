@@ -897,46 +897,56 @@ class App:
         # for minutes, concentrated in the 05:30-05:45 window when the datalogger was
         # already struggling to stay up.
         for attempt in range(1, CHUNK_ATTEMPTS + 1):
-            # Per attempt, because an attempt can end by throwing the connection away.
             # Cheap when there already is one: this hands back the client the app is
             # holding, whether that was dialled a moment ago or three polls back.
             client = self.ensure_connected()
 
-            if client is not None:
-                try:
-                    message = client.read_input_registers(
-                        device_id=self.config["datalogger"]["device_id"],
-                        address=address,
-                        count=count,
-                    )
-                except Exception as e:
-                    # The socket cannot be trusted after this, and pymodbus will not
-                    # notice: its connect() returns true whenever it still holds a
-                    # socket object, without testing whether anything is at the other
-                    # end. So a broken pipe left every later request writing into the
-                    # same dead socket, which is why this used to kill the process and
-                    # let the container restart.
-                    #
-                    # Dropping it means the attempt after this one dials a new
-                    # connection, and the poll can still succeed -- where a restart
-                    # lost the in-memory half of the energy guards with it: the
-                    # plausibility timestamps and the debounce counts are not in the
-                    # retained topics load_state reads back.
-                    #
-                    # Only for a raised error. A response that says isError is the
-                    # datalogger declining to answer, not a dead socket -- that is what
-                    # it does every morning while the inverter wakes up, and
-                    # reconnecting each time would be pure churn.
-                    logging.error(f"Error occured while querying modbus: {e}")
-                    self.drop_connection(f"a read raised {type(e).__name__}: {e}")
-                else:
-                    if not message.isError():
-                        return message.registers
+            if client is None:
+                # Nothing to read over, and dialling again here is not worth what it
+                # costs. Three dials at MODBUS_TIMEOUT each plus the pauses between
+                # them is 34 seconds, which overruns a poll_interval of 30 and leaves
+                # no sleep at all before the next poll -- measured at dusk on
+                # 2026-08-24. The next poll dials anyway, so the only thing the extra
+                # attempts buy is a longer poll.
+                break
 
-                    logging.error(
-                        f"Could not read registers {address} to {address + count - 1} "
-                        f"on attempt {attempt}, might have lost connection"
-                    )
+            try:
+                message = client.read_input_registers(
+                    device_id=self.config["datalogger"]["device_id"],
+                    address=address,
+                    count=count,
+                )
+            except Exception as e:
+                # The socket cannot be trusted after this, and pymodbus will not
+                # notice: its connect() returns true whenever it still holds a socket
+                # object, without testing whether anything is at the other end. So a
+                # broken pipe left every later request writing into the same dead
+                # socket, which is why this used to kill the process and let the
+                # container restart. Dropping it instead keeps the in-memory half of
+                # the energy guards, which a restart loses: the plausibility
+                # timestamps and the debounce counts are not in the retained topics
+                # load_state reads back.
+                #
+                # Recovery is the next poll's job, not this one's. Redialling here
+                # bought one poll out of a poll_retries budget of twenty, and cost the
+                # overrun above every time it failed. On the firmware in #114 it
+                # cannot even work: closing a socket wedges that logger's port 502 for
+                # three to six minutes, so a redial seconds later is refused by
+                # definition.
+                logging.error(f"Error occured while querying modbus: {e}")
+                self.drop_connection(f"a read raised {type(e).__name__}: {e}")
+                break
+
+            if not message.isError():
+                return message.registers
+
+            # Worth retrying, unlike the two breaks above: an isError response is the
+            # datalogger declining to answer over a socket that is still good, so the
+            # attempt after it costs one request rather than a reconnect.
+            logging.error(
+                f"Could not read registers {address} to {address + count - 1} "
+                f"on attempt {attempt}, might have lost connection"
+            )
 
             if attempt < CHUNK_ATTEMPTS:
                 sleep(CHUNK_RETRY_DELAY)
@@ -1038,11 +1048,14 @@ class App:
         self.connections_opened += 1
 
         # "The setting is on" and "the connection is actually surviving" look the same
-        # in the logs otherwise, and this line is how the question the setting exists
-        # to ask gets answered: these sticks are widely reported to hang up on an idle
-        # connection after a minute or two, which at a 30 second poll interval would
-        # mean reconnecting nearly every poll and gaining nothing. Leave it on for a
-        # day and count these.
+        # in the logs otherwise, and counting these is what settled the worry the
+        # setting was shipped with: these sticks are widely reported to hang up on an
+        # idle connection after a minute or two, which at a 30 second poll interval
+        # would mean reconnecting nearly every poll and gaining nothing. Not on the
+        # stick this was written against -- one connection served about 1326 polls
+        # over 11 hours on 2026-08-24 and ended only when the inverter powered down.
+        # The line stays because the answer is per stick, and the next person's
+        # firmware is not this one.
         message = (
             f"Connected to datalogger, connection {self.connections_opened} since "
             f"startup, previous one ended because {reason}"
@@ -1061,11 +1074,16 @@ class App:
         # Throw the connection away, with why on record for the line the next dial
         # logs. Safe to call when there is nothing to drop, which is what makes it
         # usable as "make sure there is no connection" as well.
-        self.connection_closed_reason = reason
-
+        #
+        # Nothing dropped means nothing to explain, so the reason is only recorded
+        # alongside an actual close. Otherwise the end of a poll would overwrite the
+        # interesting reason with "the connection is not kept between polls": the
+        # socket a read had already raised on is dropped inside read_chunk, and the
+        # poll then ends normally on top of it.
         if self.client is None:
             return
 
+        self.connection_closed_reason = reason
         self.client.close()
         self.client = None
 
@@ -1141,6 +1159,10 @@ class App:
 
         registers, expected_registers = self.read_span()
 
+        # The poll's reads are over however it went, so the connection is handed back
+        # once here rather than on the way out of each branch below.
+        self.release_connection()
+
         # Sometimes we get a response with almost all values being 0, usually also multiple registers
         # are missing. In that case we just return an empty dictionary. This validation is not perfect
         # but it should be good enough for now.
@@ -1149,14 +1171,14 @@ class App:
                 f"Validation of number of queried registers failed. "
                 f"Queried: {expected_registers}, received: {len(registers)}"
             )
-            # A poll that could not read the span it asked for leaves a connection
-            # there is no reason to trust, so the next poll starts from a fresh one.
-            # That is also what every poll did before a connection could be kept, so
-            # turning the setting on cannot make a bad morning worse than it was.
-            self.drop_connection("the register span could not be read in full")
+            # A short span is not a reason to throw the connection away. A socket that
+            # actually broke raised in read_chunk and was dropped there; a span that
+            # came up short without one is the datalogger declining to answer, which is
+            # what it does every morning while the inverter wakes up, and the socket is
+            # still good. Closing it buys nothing here and costs three to six minutes
+            # of wedged port 502 on the firmware in #114 -- on the morning of
+            # 2026-08-25 this fired at 05:46 on a perfectly healthy connection.
             return {}
-
-        self.release_connection()
 
         if self.response_is_dead(registers):
             return {}

@@ -7,11 +7,18 @@ nothing else -- Solis Cloud included -- can reach the stick, where hanging up le
 gap in every poll cycle where something else can. Hence the setting, and hence off by
 default.
 
-The setting is expected to be temporary. These sticks are widely reported to hang up
-on an idle connection after a minute or two, and at a 30 second poll interval that
-would mean reconnecting nearly every poll and gaining nothing. That cannot be settled
-from here, only measured, which is what the one log line per connection is for: turn
-it on, leave it a day, count them.
+The setting is permanent, and which way it should go is the user's call. Newer
+firmware needs it on: the logger in #114 wedges port 502 for three to six minutes
+whenever the connection is closed, so connection-per-poll cannot work there at any
+sane interval. Older firmware does not care, and there the trade is the cloud.
+
+The "these sticks hang up on an idle connection after a minute or two" worry turned
+out not to hold, at least on the stick this was written against: measured over
+2026-08-24/25 on firmware 10010125, one connection served about 1326 polls across
+11 hours and ended only when the inverter powered down at dusk. Nothing is held
+overnight -- the stick is unpowered -- so this setting only does anything in daylight.
+The one log line per connection is what settled that, and what would settle it again
+on other hardware.
 """
 
 import socket
@@ -38,6 +45,17 @@ def test_the_connection_is_dropped_after_every_poll_by_default(polls):
     assert app.client is None
 
 
+def test_a_failed_poll_still_hangs_up_by_default(polls):
+    # The span check used to be what closed this, so removing its drop must not leave
+    # a failed poll holding a connection in the mode whose whole point is not to. The
+    # gap between polls is what lets Solis Cloud in, and a failing datalogger is
+    # exactly when it is most likely to want it.
+    app = polls((), ())
+
+    assert app.client is None
+    assert app.stub_client.closes == 2
+
+
 def test_the_connection_is_kept_between_polls_when_it_is_asked_for(polls):
     app = polls((live_response(),), (live_response(),), (live_response(),), **KEPT)
 
@@ -52,34 +70,38 @@ def test_a_kept_connection_still_reads_the_whole_span_every_poll(polls):
     assert app.stub_client.reads == [(3004, SPAN), (3004, SPAN)]
 
 
-def test_a_poll_that_could_not_read_the_span_lets_the_connection_go(polls):
-    # A connection the datalogger would not answer over is not one to hold on to, and
-    # holding it would keep everything else off the stick for nothing. This is also
-    # what every poll did before the connection could be kept, so turning the setting
-    # on cannot make a bad morning worse than it already was.
+def test_a_poll_that_could_not_read_the_span_keeps_the_connection(polls):
+    # A span that came up short without a raised read is the datalogger declining to
+    # answer over a socket that is still good -- what it does every morning while the
+    # inverter wakes up. Closing it buys nothing, and on the firmware in #114 it costs
+    # three to six minutes of wedged port 502, locking the app out of a logger that
+    # was about to start answering. This fired at 05:46 on 2026-08-25 against a
+    # perfectly healthy connection.
     app = polls((), **KEPT)
 
-    assert app.client is None
-    assert app.stub_client.closes == 1
+    assert app.client is app.stub_client
+    assert app.stub_client.closes == 0
 
 
-def test_the_poll_after_a_failure_dials_a_fresh_connection(polls):
+def test_the_poll_after_a_refused_read_reuses_the_connection(polls):
     app = polls((live_response(),), (), (live_response(),), **KEPT)
 
-    assert app.stub_client.connects == 2
+    assert app.stub_client.connects == 1
     assert app.client is app.stub_client
 
 
-def test_a_dead_socket_is_redialled_inside_the_poll(query):
-    # The raised error drops the connection, and the attempt after it dials again
-    # rather than writing into the same dead socket. With the connection kept, that
-    # redial is the app's own rather than something pymodbus does out of sight.
-    app, client, registers = query(
-        OSError("Connection reset by peer"), live_response(), **KEPT
-    )
+def test_a_dead_socket_is_redialled_by_the_poll_after_it(polls):
+    # The raised error drops the connection, and the poll after it dials again rather
+    # than writing into the same dead socket. With the connection kept, that redial is
+    # the app's own rather than something pymodbus does out of sight.
+    #
+    # The poll after, not the attempt after: redialling inside the same poll saved one
+    # poll out of the retry budget and cost 34 seconds of timeouts every time it did
+    # not work, which is longer than the poll interval it had to fit inside.
+    app = polls((OSError("Connection reset by peer"),), (live_response(),), **KEPT)
 
-    assert client.connects == 2
-    assert len(registers) == SPAN
+    assert app.stub_client.connects == 2
+    assert app.client is app.stub_client
 
 
 def test_a_reused_connection_is_not_evidence_the_datalogger_is_there(polls):
@@ -129,20 +151,30 @@ def test_a_connection_pymodbus_had_already_closed_says_so(polls, caplog):
 def test_every_connection_is_logged_with_why_the_last_one_ended(polls, caplog):
     caplog.set_level("INFO")
 
-    polls((live_response(),), (), (live_response(),), **KEPT)
+    polls(
+        (live_response(),),
+        (OSError("Connection reset by peer"),),
+        (live_response(),),
+        **KEPT,
+    )
 
     first, second = connection_lines(caplog)
 
     assert "connection 1 since startup" in first
     assert "nothing has been connected yet" in first
     assert "connection 2 since startup" in second
-    assert "the register span could not be read in full" in second
+    assert "a read raised OSError: Connection reset by peer" in second
 
 
-def test_a_lost_socket_says_so_in_the_line_for_the_connection_after_it(query, caplog):
-    caplog.set_level("INFO")
+def test_a_lost_socket_is_still_the_reason_after_the_poll_ends(polls, caplog):
+    # Default mode, where the end of every poll hangs up. The socket was already gone,
+    # dropped by the read that raised, so the release at the end of that poll has
+    # nothing to close -- and must not relabel why the connection went. Recording the
+    # reason on a drop that dropped nothing buried the only interesting one there is
+    # under "the connection is not kept between polls".
+    caplog.set_level("DEBUG")
 
-    query(OSError("Connection reset by peer"), live_response(), **KEPT)
+    polls((OSError("Connection reset by peer"),), (live_response(),))
 
     assert (
         "a read raised OSError: Connection reset by peer" in connection_lines(caplog)[1]
@@ -186,12 +218,12 @@ def test_every_declared_option_reaches_the_socket(query):
     assert client.sockets[0].options == app.keepalive_options()
 
 
-def test_a_redialled_connection_gets_its_own_keepalive(query):
+def test_a_redialled_connection_gets_its_own_keepalive(polls):
     # A new socket starts with the system defaults, which on Linux is a first probe
     # after two hours.
-    app, client, registers = query(OSError("Connection reset by peer"), live_response())
+    app = polls((OSError("Connection reset by peer"),), (live_response(),))
 
-    assert client.sockets[1].options == app.keepalive_options()
+    assert app.stub_client.sockets[1].options == app.keepalive_options()
 
 
 def test_a_socket_that_refuses_the_options_still_gets_polled(query, caplog):
