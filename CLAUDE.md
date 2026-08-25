@@ -57,9 +57,18 @@ either of them. `app/sensors.py` decides which names `sensors.yaml` may use, and
 
 The client belongs to the app (`self.client`), not to a poll. `ensure_connected()` is
 the only thing that dials one and `drop_connection(reason)` the only thing that throws
-one away, which is what lets a read that raised redial mid-poll instead of writing
-into a dead socket. `release_connection()` at the end of a good poll is the single
-place the `datalogger.persistent_connection` setting is read.
+one away, so a read that raised cannot go on writing into a dead socket.
+`release_connection()`, once per poll however the poll went, is the single place the
+`datalogger.persistent_connection` setting is read.
+
+A poll gives up as soon as it has no connection to read over: recovery is the next
+poll's job. Redialling inside the same poll saved one poll out of a `poll_retries`
+budget of twenty and cost three `MODBUS_TIMEOUT`s when it failed — 34 seconds against
+a `poll_interval` of 30, which is a poll that overruns its own interval. Only a
+refused read (`isError`) is retried in place, because that socket is still good. The
+span length check in `query_modbus` does *not* drop the connection: a socket that
+really broke raised in `read_chunk` and was dropped there, and closing a healthy one
+wedges port 502 for three to six minutes on the firmware in #114.
 
 That setting is off by default and is permanent — it is a per-user trade, not a
 migration. The stick accepts one connection at a time, so holding ours keeps
