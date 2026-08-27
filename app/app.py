@@ -1130,10 +1130,34 @@ class App:
         self.client = None
 
     def release_connection(self) -> None:
-        # End of a poll that worked. Holding on to the connection is the entire point
-        # of the setting; hanging up is what this app has always done, and what leaves
-        # the datalogger free for whatever else wants to talk to it -- it accepts one
+        # End of a poll. Holding on to the connection is the entire point of the
+        # setting; hanging up is what this app has always done, and what leaves the
+        # datalogger free for whatever else wants to talk to it -- it accepts one
         # connection at a time.
+        if self.datalogger_offline:
+            # Except across an offline wait, where holding one is worse than useless.
+            # The datalogger is not merely quiet here, it is powered down and coming
+            # back up: dawn is a repeated power cycle of the inverter and the stick
+            # together, for several minutes. A socket held across poll_interval_if_off
+            # is dead before it is used again, and the kernel knows it -- TCP
+            # keepalive kills it during the sleep, so the read raises the pending
+            # error instantly without a byte reaching the network.
+            #
+            # That cost a whole cycle on both 2026-08-26 and 2026-08-27. The poll at
+            # 05:59:11.280 raised at 05:59:11.280, learned nothing about whether the
+            # datalogger was there, and the next attempt was ten minutes later. Both
+            # mornings came online 20 minutes after first contact where a fresh dial
+            # each time would have made it 10.
+            #
+            # Assumes poll_interval_if_off is long. It is 600 by default, which is
+            # also comfortably past the three to six minutes the firmware in #114
+            # needs to unwedge port 502 after a close, so this cannot reintroduce that
+            # problem at any sane setting.
+            self.drop_connection(
+                "the datalogger is offline and the next poll is far off"
+            )
+            return
+
         if self.config["datalogger"]["persistent_connection"]:
             return
 

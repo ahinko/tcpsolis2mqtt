@@ -83,6 +83,54 @@ def test_a_poll_that_could_not_read_the_span_keeps_the_connection(polls):
     assert app.stub_client.closes == 0
 
 
+def test_a_connection_is_kept_while_the_retry_budget_runs(polls):
+    # A poll or two that went nowhere is not an offline datalogger, and the polls are
+    # still poll_interval apart, so the socket has not been sitting long enough to go
+    # stale. This is the window the setting exists for.
+    app = polls((live_response(),), (), **KEPT)
+
+    assert not app.datalogger_offline
+    assert app.client is app.stub_client
+
+
+def test_a_connection_is_not_held_across_an_offline_wait(polls, make_app):
+    # Once the datalogger is declared offline the wait becomes poll_interval_if_off,
+    # and it is not merely quiet -- at dawn it is power cycling. A socket held across
+    # that gap is dead before it is used again, and the read raises the pending error
+    # instantly without reaching the network, so the poll learns nothing and a whole
+    # cycle is gone. Measured on both 2026-08-26 and 2026-08-27: online 20 minutes
+    # after first contact, where the wasted poll in the middle did no work at all.
+    retries = make_app().config["datalogger"]["poll_retries"]
+
+    app = polls((live_response(),), *[()] * (retries + 1), **KEPT)
+
+    assert app.datalogger_offline
+    assert app.client is None
+
+
+def test_the_poll_after_an_offline_wait_dials_a_fresh_connection(polls, make_app):
+    # Which is the point: a dial is the only thing that actually tests whether the
+    # datalogger is back, where a held socket only tests itself.
+    retries = make_app().config["datalogger"]["poll_retries"]
+
+    app = polls((live_response(),), *[()] * (retries + 1), (live_response(),), **KEPT)
+
+    assert app.stub_client.connects > 1
+    assert not app.datalogger_offline
+
+
+def test_an_offline_wait_says_why_the_connection_went(polls, make_app, caplog):
+    caplog.set_level("INFO")
+    retries = make_app().config["datalogger"]["poll_retries"]
+
+    polls((live_response(),), *[()] * (retries + 1), (live_response(),), **KEPT)
+
+    assert (
+        "the datalogger is offline and the next poll is far off"
+        in (connection_lines(caplog)[-1])
+    )
+
+
 def test_the_poll_after_a_refused_read_reuses_the_connection(polls):
     app = polls((live_response(),), (), (live_response(),), **KEPT)
 
