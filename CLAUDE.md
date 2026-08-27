@@ -59,7 +59,9 @@ The client belongs to the app (`self.client`), not to a poll. `ensure_connected(
 the only thing that dials one and `drop_connection(reason)` the only thing that throws
 one away, so a read that raised cannot go on writing into a dead socket.
 `release_connection()`, once per poll however the poll went, is the single place the
-`datalogger.persistent_connection` setting is read.
+`datalogger.persistent_connection` setting is read — and the one thing that
+short-circuits ahead of it is `datalogger_offline`, which hangs up whatever the
+setting says.
 
 A poll gives up as soon as it has no connection to read over: recovery is the next
 poll's job. Redialling inside the same poll saved one poll out of a `poll_retries`
@@ -69,6 +71,16 @@ refused read (`isError`) is retried in place, because that socket is still good.
 span length check in `query_modbus` does *not* drop the connection: a socket that
 really broke raised in `read_chunk` and was dropped there, and closing a healthy one
 wedges port 502 for three to six minutes on the firmware in #114.
+
+Nothing is held across an offline wait, though, and that exception is load bearing.
+Once the datalogger is offline the gap becomes `poll_interval_if_off`, and it is not
+merely quiet — dawn is a repeated power cycle of the inverter and the stick together.
+A socket held across that gap is dead before it is used again and TCP keepalive has
+already killed it, so the read raises the pending error in the same millisecond the
+poll started, without a byte reaching the network. That poll learns nothing and the
+next one is ten minutes away. Both 2026-08-26 and 2026-08-27 came online 20 minutes
+after first contact for exactly that reason. Dialling every offline poll is what makes
+the poll a test of the datalogger rather than of our own socket.
 
 That setting is off by default and is permanent — it is a per-user trade, not a
 migration. The stick accepts one connection at a time, so holding ours keeps
