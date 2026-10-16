@@ -16,7 +16,7 @@
 # write `except TypeError, ValueError:` without parentheses, and at py314 the
 # formatter strips them. It is valid 3.14, but it reads like the Python 2
 # `except X, e:` idiom, and it means the source no longer parses on 3.13.
-target-version = "py314"
+target-version = "py315"
 
 [lint]
 # Ruff's historical default: a subset of pycodestyle plus all of Pyflakes.
