@@ -148,10 +148,12 @@ disabled via the `make_app` fixture and records publishes.
 ## Build and CI
 
 The Python version is declared **once**, in the `Dockerfile` `FROM` line, and repeated
-once in `ruff.toml` as `target-version` where Renovate cannot rewrite it. CI reads it
-back out of the Dockerfile with a `sed`. `tests/test_python_version.py` enforces all
-three facts and will fail the build if a workflow starts declaring its own version or
-if `ruff.toml` falls behind — that failure is the intended signal, fix `ruff.toml`.
+once in `ruff.toml` as `target-version`, which a regex custom manager in
+`.github/renovate.json` moves in the same PR (it reads `py314` as `3.14` and writes
+it back without the dot). CI reads the version out of the Dockerfile with a `sed`.
+`tests/test_python_version.py` enforces all three facts and will fail the build if a
+workflow starts declaring its own version or if `ruff.toml` falls behind — if that
+happens, the custom manager has stopped matching.
 
 Two related traps, both documented in the files themselves:
 

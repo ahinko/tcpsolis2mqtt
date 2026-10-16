@@ -7,9 +7,10 @@
 # Ruff stays current, and adopting a new rule stays a deliberate decision with its
 # own commit rather than an ambush on an unrelated PR.
 
-# Matches the Dockerfile (python:3.14.5-alpine) and CI (3.14.1). The app only ever
+# Matches the Dockerfile, which CI also reads its Python from. The app only ever
 # runs on the version the image ships, so there is nothing to gain from claiming an
-# older floor.
+# older floor. A custom manager in .github/renovate.json moves this line in the same
+# PR as the Dockerfile; tests/test_python_version.py fails if the two disagree.
 #
 # One consequence worth knowing before this is lowered again: PEP 758 lets 3.14
 # write `except TypeError, ValueError:` without parentheses, and at py314 the

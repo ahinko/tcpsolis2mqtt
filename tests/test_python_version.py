@@ -7,12 +7,11 @@ Dockerfile was pinned to an alpine line it could not leave, a bare version had n
 such limit, and PR #158 duly moved one without the other. CI now reads the version
 out of the Dockerfile instead, so there is one source and nothing to synchronise.
 
-ruff.toml is the exception. It writes the version as `py314`, which is neither a
-version Renovate can parse nor one it could compare against Docker tags, so there
-is nothing sensible to hand it. This fails instead, which turns the Python PR red
-until ruff.toml follows. That matters more than it looks: target-version decides
-what the formatter may emit, and at py314 that already includes syntax 3.13 cannot
-parse.
+ruff.toml is the exception. It writes the version as `py314`, so a custom manager
+in .github/renovate.json reads it back as `3.14`, tracks the two-part python tag,
+and writes it without the dot, landing on the same branch as the Dockerfile. This
+still fails if the two disagree, because target-version decides what the formatter
+may emit, and at py314 that already includes syntax 3.13 cannot parse.
 """
 
 import re
@@ -41,8 +40,8 @@ def ruff_target():
 def test_ruff_targets_the_python_the_image_ships():
     assert ruff_target() == dockerfile_version()[:2], (
         f"ruff.toml targets py{''.join(str(p) for p in ruff_target())} but the image "
-        f"ships {dockerfile_version()}. Renovate cannot rewrite ruff.toml, so it has "
-        "to be updated by hand alongside the Python PR."
+        f"ships {dockerfile_version()}. Renovate's custom manager for ruff.toml should "
+        "move both in one PR; check .github/renovate.json."
     )
 
 

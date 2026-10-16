@@ -12,9 +12,26 @@
     "@ahinko"
   ],
   "semanticCommits": "enabled",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "ruff.toml repeats the Dockerfile's Python as py<major><minor>. Read it back as <major>.<minor>, track the two-part python tag that is published alongside every release, and write it back without the dot. Same depName and major as the Dockerfile, so both land on the same renovate/python-3.x branch.",
+      "managerFilePatterns": [
+        "/^ruff\\.toml$/"
+      ],
+      "matchStrings": [
+        "target-version\\s*=\\s*\"py(?<major>\\d)(?<minor>\\d+)\""
+      ],
+      "currentValueTemplate": "{{{major}}}.{{{minor}}}",
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "python",
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "target-version = \"py{{{replace '[.]' '' newValue}}}\""
+    }
+  ],
   "packageRules": [
     {
-      "description": "Python is declared once, in the Dockerfile, and CI reads the version out of it. There is nothing to group with it and no custom manager: two copies meant two dependencies with different constraints, and Renovate moved one without the other. ruff.toml still repeats it as py<major><minor>, which is not a shape Renovate can rewrite, so tests/test_python_version.py fails if that is left behind.",
+      "description": "Python is declared in the Dockerfile, and CI reads the version out of it. ruff.toml repeats it as py<major><minor>, kept in step by the custom manager above; tests/test_python_version.py still fails if the two ever disagree.",
       "matchDatasources": [
         "docker"
       ],
