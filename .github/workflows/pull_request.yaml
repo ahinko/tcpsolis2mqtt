@@ -27,7 +27,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python ${{ steps.python.outputs.version }}
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: ${{ steps.python.outputs.version }}
 
