@@ -120,6 +120,9 @@ It used to default to 15, which is the rating of the inverter this project was w
 
 It's a nameplate rating, not a tuning knob. If real readings are being rejected, the value isn't the problem.
 
+### Running more than one inverter
+Run one instance per data logger. Each needs its own `inverter.identifier`, `inverter.name`, `mqtt.topic_prefix` and `mqtt.client_id`. Home Assistant groups entities into a device by `inverter.identifier` (default `tcpsolis2mqtt`), so two instances sharing it show up as a single device. Two instances sharing a `client_id` kick each other off the broker.
+
 ### Environment variables
 It's currently only possible to use environment variables to set MQTT user and password. Use `MQTT_USER` and `MQTT_PASSWORD`.
 

@@ -23,6 +23,11 @@ datalogger:
     password: "123456789"
 # Required
 inverter:
+  # Home Assistant groups all entities with the same identifier into one device. Only
+  # change this when running several instances (one per inverter), and give each its
+  # own identifier, mqtt.topic_prefix, mqtt.client_id and name. Changing it on an
+  # existing install moves its entities to a new device.
+  identifier: tcpsolis2mqtt
   name: Solis
   manufacturer: Ginlong Technologies
   model: S5-GR3P15K

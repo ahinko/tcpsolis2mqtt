@@ -21,7 +21,7 @@ class DiscoverMsgSensor:
             "name": "",
             "model": "",
             "manufacturer": "",
-            "identifiers": "tcpsolis2mqtt",
+            "identifiers": "",
             "sw_version": "tcpsolis2mqtt ",
             "configuration_url": "",
         },
@@ -36,6 +36,7 @@ class DiscoverMsgSensor:
         device_class,
         state_class,
         availability_topics,
+        device_identifier,
         device_name,
         device_model,
         device_manufacturer,
@@ -52,6 +53,7 @@ class DiscoverMsgSensor:
         self.discover_msg["availability"] = [
             {"topic": topic} for topic in availability_topics
         ]
+        self.discover_msg["device"]["identifiers"] = device_identifier
         self.discover_msg["device"]["name"] = device_name
         self.discover_msg["device"]["model"] = device_model
         self.discover_msg["device"]["manufacturer"] = device_manufacturer
@@ -75,7 +77,7 @@ class DiscoverMsgBinary:
             "name": "",
             "model": "",
             "manufacturer": "",
-            "identifiers": "tcpsolis2mqtt",
+            "identifiers": "",
             "sw_version": "tcpsolis2mqtt ",
             "configuration_url": "",
         },
@@ -91,6 +93,7 @@ class DiscoverMsgBinary:
         device_class,
         state_class,
         availability_topics,
+        device_identifier,
         device_name,
         device_model,
         device_manufacturer,
@@ -108,6 +111,7 @@ class DiscoverMsgBinary:
         self.discover_msg["availability"] = [
             {"topic": topic} for topic in availability_topics
         ]
+        self.discover_msg["device"]["identifiers"] = device_identifier
         self.discover_msg["device"]["name"] = device_name
         self.discover_msg["device"]["model"] = device_model
         self.discover_msg["device"]["manufacturer"] = device_manufacturer

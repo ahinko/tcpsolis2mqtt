@@ -20,6 +20,7 @@ def sensor_msg(topics):
                 "voltage",
                 "measurement",
                 topics,
+                "tcpsolis2mqtt",
                 "Solis",
                 "S5-GR3P15K",
                 "Ginlong Technologies",
@@ -42,6 +43,7 @@ def binary_msg(topics):
                 "problem",
                 None,
                 topics,
+                "tcpsolis2mqtt",
                 "Solis",
                 "S5-GR3P15K",
                 "Ginlong Technologies",
@@ -75,3 +77,30 @@ def test_messages_do_not_share_state():
 
     assert first["availability"] == [{"topic": APP}, {"topic": DATALOGGER}]
     assert second["availability"] == [{"topic": APP}]
+
+
+def test_the_device_is_identified_by_the_configured_identifier():
+    # Two instances with different identifiers must be two devices in Home Assistant.
+    message = json.loads(
+        str(
+            DiscoverMsgSensor(
+                "solis_roof2",
+                "AC A phase voltage",
+                "ac_a_phase_voltage",
+                "V",
+                "voltage",
+                "measurement",
+                [],
+                "solis_roof2",
+                "Solis 2",
+                "S5-GR3P15K",
+                "Ginlong Technologies",
+                "http://192.0.2.2",
+                "2.0.0",
+            )
+        )
+    )
+
+    assert message["device"]["identifiers"] == "solis_roof2"
+    assert sensor_msg([APP])["device"]["identifiers"] == "tcpsolis2mqtt"
+    assert binary_msg([APP])["device"]["identifiers"] == "tcpsolis2mqtt"

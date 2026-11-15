@@ -39,6 +39,10 @@ class DataLoggerConfig(Schema):
 
 
 class InverterConfig(Schema):
+    # What Home Assistant groups entities into one device by. Two instances that
+    # share it end up as one device, so a second inverter needs its own. Defaults to
+    # the value that was hardcoded before, so existing installs keep their device.
+    identifier = fields.Str(required=False, load_default="tcpsolis2mqtt")
     name = fields.Str(required=False, load_default="")
     manufacturer = fields.Str(required=False, load_default="")
     model = fields.Str(required=False, load_default="")

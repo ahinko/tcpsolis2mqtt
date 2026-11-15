@@ -83,3 +83,15 @@ def test_the_shipped_example_names_a_rating():
     example = yaml.safe_load(open("config.example.yaml"))
 
     assert example["inverter"]["max_power_kw"]
+
+
+def test_the_inverter_identifier_defaults_to_what_was_hardcoded_before():
+    # Existing installs never set it, and their Home Assistant device is keyed on
+    # this value. A different default would move every entity to a new device.
+    assert AppConfig().load(config())["inverter"]["identifier"] == "tcpsolis2mqtt"
+
+
+def test_the_inverter_identifier_can_be_overridden():
+    loaded = AppConfig().load(config(identifier="solis_roof2"))
+
+    assert loaded["inverter"]["identifier"] == "solis_roof2"
