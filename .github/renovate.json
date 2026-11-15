@@ -44,6 +44,19 @@
       ]
     },
     {
+      "description": "The Dockerfile pins python:<version>-alpine3.<minor>. Default docker versioning treats the alpine suffix as a compatibility constraint and never leaves it, which froze the image at 3.14.5 when 3.14.6 was only published for the next alpine. Here the alpine minor is the build number, so python and alpine move together to the newest tag. Only the dockerfile manager: the ruff.toml manager tracks the bare two-part tag and keeps docker versioning. tests/test_python_version.py checks the Dockerfile tag against this pattern.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "versioning": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-alpine3\\.(?<build>\\d+)$"
+    },
+    {
       "matchDatasources": [
         "docker",
         "pypi"

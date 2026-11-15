@@ -7,6 +7,12 @@ Dockerfile was pinned to an alpine line it could not leave, a bare version had n
 such limit, and PR #158 duly moved one without the other. CI now reads the version
 out of the Dockerfile instead, so there is one source and nothing to synchronise.
 
+The Dockerfile pins the alpine line as well (`-alpine3.24`), and Renovate normally
+treats such a suffix as a constraint it never crosses. That is what froze the image
+at 3.14.5 once, so .github/renovate.json versions the line with a regex that reads
+the alpine minor as a number. The tests below fail if the tag and that regex stop
+matching, which would silently turn Renovate off for the image.
+
 ruff.toml is the exception. It writes the version as `py315`, so a custom manager
 in .github/renovate.json reads it back as `3.15`, tracks the two-part python tag,
 and writes it without the dot, landing on the same branch as the Dockerfile. This
@@ -14,6 +20,7 @@ still fails if the two disagree, because target-version decides what the formatt
 may emit, and at py315 that already includes syntax 3.13 cannot parse.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -71,3 +78,54 @@ def test_the_workflow_reads_the_version_the_way_this_test_does():
 
     assert extracted, "the sed in the workflow would produce an empty version"
     assert tuple(int(p) for p in extracted.group(1).split(".")) == dockerfile_version()
+
+
+def renovate_rules():
+    config = json.loads((REPO_ROOT / ".github" / "renovate.json").read_text())
+    return config["packageRules"], config["customManagers"]
+
+
+def dockerfile_tag():
+    return search(REPO_ROOT / "Dockerfile", r"(?m)^FROM python:(\S+)$").group(1)
+
+
+def dockerfile_versioning():
+    rules, _ = renovate_rules()
+    (rule,) = [r for r in rules if "versioning" in r]
+    assert rule["matchManagers"] == ["dockerfile"], (
+        "the regex versioning must not reach the ruff.toml manager, whose current "
+        "value is the bare two-part tag"
+    )
+    assert rule["matchPackageNames"] == ["python"]
+    assert rule["versioning"].startswith("regex:")
+    return rule["versioning"].removeprefix("regex:")
+
+
+def test_the_dockerfile_pins_python_and_the_alpine_line():
+    assert re.fullmatch(r"\d+\.\d+\.\d+-alpine3\.\d+", dockerfile_tag()), (
+        f"{dockerfile_tag()!r} is not <major>.<minor>.<patch>-alpine3.<minor>"
+    )
+
+
+def test_renovate_can_read_the_dockerfile_tag():
+    # Renovate's regex uses (?<name>); Python spells it (?P<name>).
+    pattern = re.sub(r"\(\?<(\w+)>", r"(?P<\1>", dockerfile_versioning())
+    match = re.fullmatch(pattern, dockerfile_tag())
+
+    assert match, "renovate.json no longer matches the Dockerfile tag"
+    assert {"major", "minor", "patch", "build"} <= set(match.groupdict())
+    assert tuple(int(match[g]) for g in ("major", "minor", "patch")) == (
+        dockerfile_version()
+    )
+
+
+def test_the_alpine_line_is_not_a_compatibility_constraint():
+    # A `compatibility` group is what makes Renovate refuse to leave an alpine line.
+    assert "compatibility" not in dockerfile_versioning()
+
+
+def test_the_ruff_manager_keeps_plain_docker_versioning():
+    _, managers = renovate_rules()
+    (ruff,) = managers
+
+    assert ruff["versioningTemplate"] == "docker"

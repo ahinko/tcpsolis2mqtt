@@ -157,8 +157,11 @@ happens, the custom manager has stopped matching.
 
 Two related traps, both documented in the files themselves:
 
-* The Docker tag is plain `-alpine`, not `-alpineX.Y`. Renovate treats the suffix as
-  a compatibility constraint it will not cross, which silently froze the image.
+* The Docker tag pins the alpine line (`-alpine3.24`), and that only works because
+  `.github/renovate.json` versions the Dockerfile with a regex that reads the alpine
+  minor as a number. Renovate's default treats such a suffix as a compatibility
+  constraint it will not cross, which silently froze the image at 3.14.5 once.
+  `tests/test_python_version.py` fails if the tag and the regex stop matching.
 * `ruff.toml` pins an explicit rule set (`E4`, `E7`, `E9`, `F`) rather than inheriting
   ruff's default, because CI installs ruff unpinned and a new default turns unrelated
   PRs red. Adopting a new rule is a deliberate commit of its own.
