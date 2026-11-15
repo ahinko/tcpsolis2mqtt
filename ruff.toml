@@ -13,8 +13,8 @@
 # PR as the Dockerfile; tests/test_python_version.py fails if the two disagree.
 #
 # One consequence worth knowing before this is lowered again: PEP 758 lets 3.14
-# write `except TypeError, ValueError:` without parentheses, and at py314 the
-# formatter strips them. It is valid 3.14, but it reads like the Python 2
+# and later write `except TypeError, ValueError:` without parentheses, and at
+# py315 the formatter strips them. It is valid 3.14+, but it reads like the Python 2
 # `except X, e:` idiom, and it means the source no longer parses on 3.13.
 target-version = "py315"
 

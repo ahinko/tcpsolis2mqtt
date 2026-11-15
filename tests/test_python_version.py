@@ -7,11 +7,11 @@ Dockerfile was pinned to an alpine line it could not leave, a bare version had n
 such limit, and PR #158 duly moved one without the other. CI now reads the version
 out of the Dockerfile instead, so there is one source and nothing to synchronise.
 
-ruff.toml is the exception. It writes the version as `py314`, so a custom manager
-in .github/renovate.json reads it back as `3.14`, tracks the two-part python tag,
+ruff.toml is the exception. It writes the version as `py315`, so a custom manager
+in .github/renovate.json reads it back as `3.15`, tracks the two-part python tag,
 and writes it without the dot, landing on the same branch as the Dockerfile. This
 still fails if the two disagree, because target-version decides what the formatter
-may emit, and at py314 that already includes syntax 3.13 cannot parse.
+may emit, and at py315 that already includes syntax 3.13 cannot parse.
 """
 
 import re

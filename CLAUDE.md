@@ -149,7 +149,7 @@ disabled via the `make_app` fixture and records publishes.
 
 The Python version is declared **once**, in the `Dockerfile` `FROM` line, and repeated
 once in `ruff.toml` as `target-version`, which a regex custom manager in
-`.github/renovate.json` moves in the same PR (it reads `py314` as `3.14` and writes
+`.github/renovate.json` moves in the same PR (it reads `py315` as `3.15` and writes
 it back without the dot). CI reads the version out of the Dockerfile with a `sed`.
 `tests/test_python_version.py` enforces all three facts and will fail the build if a
 workflow starts declaring its own version or if `ruff.toml` falls behind — if that
@@ -163,8 +163,8 @@ Two related traps, both documented in the files themselves:
   ruff's default, because CI installs ruff unpinned and a new default turns unrelated
   PRs red. Adopting a new rule is a deliberate commit of its own.
 
-`target-version = "py314"` means the formatter may emit PEP 758 syntax — an
-unparenthesized `except TypeError, ValueError:` in `app.py` is valid 3.14, not a typo,
+`target-version = "py315"` means the formatter may emit PEP 758 syntax — an
+unparenthesized `except TypeError, ValueError:` in `app.py` is valid 3.14+, not a typo,
 and does not parse on 3.13.
 
 `build-on-release.yaml` pushes to GHCR on both main and `v*.*.*` tags. The `:main`
